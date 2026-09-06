@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: hivedesk-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hivedesk
+      POSTGRES_PASSWORD: hivedesk
+      POSTGRES_DB: hivedesk
+    ports:
+      # host 5442 -> container 5432 (host already runs a local Postgres on 5432)
+      - "5442:5432"
+    volumes:
+      - hivedesk_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hivedesk -d hivedesk"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  redis:
+    image: redis:7
+    container_name: hivedesk-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+volumes:
+  hivedesk_pgdata:

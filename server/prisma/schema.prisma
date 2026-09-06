@@ -1,0 +1,107 @@
+// HiveDesk multi-tenant schema.
+//
+// Discipline: every tenant-owned model carries a non-null `tenantId` with an index
+// and an FK to Tenant. `Message` is the one exception — it has no `tenantId` and is
+// always reached (and scoped) through its parent `Conversation`.
+//
+// All tenant data access in the app goes through `forTenant()` in src/lib/tenantDb.js.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum AgentRole {
+  AGENT
+  ADMIN
+}
+
+enum ConversationStatus {
+  AI
+  WAITING
+  AGENT
+  CLOSED
+}
+
+enum MessageRole {
+  VISITOR
+  AI
+  AGENT
+}
+
+model Tenant {
+  id           String   @id @default(cuid())
+  name         String
+  // Public, safe to embed in the widget <script> tag.
+  widgetApiKey String   @unique
+  // Internal config — never exposed to widget callers.
+  settings     Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  agents               Agent[]
+  conversations        Conversation[]
+  knowledgeBaseEntries KnowledgeBaseEntry[]
+}
+
+model Agent {
+  id           String    @id @default(cuid())
+  tenantId     String
+  email        String
+  passwordHash String
+  name         String
+  role         AgentRole @default(AGENT)
+  createdAt    DateTime  @default(now())
+
+  tenant                Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedConversations Conversation[] @relation("AssignedAgent")
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+}
+
+model Conversation {
+  id               String             @id @default(cuid())
+  tenantId         String
+  visitorSessionId String
+  status           ConversationStatus @default(AI)
+  assignedAgentId  String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedAgent Agent?    @relation("AssignedAgent", fields: [assignedAgentId], references: [id], onDelete: SetNull)
+  messages      Message[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  conversationId String
+  role           MessageRole
+  content        String      @db.Text
+  createdAt      DateTime    @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+model KnowledgeBaseEntry {
+  id        String   @id @default(cuid())
+  tenantId  String
+  question  String
+  answer    String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}

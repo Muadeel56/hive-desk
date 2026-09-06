@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HiveDesk widget — built-bundle demo</title>
+  </head>
+  <body style="font-family: system-ui; padding: 40px; max-width: 640px; margin: 0 auto">
+    <h1>Plain HTML page</h1>
+    <p>
+      No build tools, no framework — just this file and one
+      <code>&lt;script&gt;</code> tag. The chat bubble should appear bottom-right.
+    </p>
+    <p>
+      Run <code>npm run build</code> first, then open this file directly
+      (<code>file://</code>) or serve the folder with <code>npx serve</code>.
+    </p>
+
+    <!-- The one line a tenant pastes on their site: -->
+    <script src="./dist/hivedesk-widget.js" data-api-key="test" data-api-url="http://localhost:3000"></script>
+  </body>
+</html>

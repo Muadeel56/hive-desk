@@ -1,0 +1,17 @@
+{
+  "name": "hivedesk-widget",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HiveDesk embeddable chat bubble — single self-contained bundle, no framework shipped",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "size": "gzip -c dist/hivedesk-widget.js | wc -c"
+  },
+  "devDependencies": {
+    "terser": "^5.37.0",
+    "vite": "^6.0.7"
+  }
+}
