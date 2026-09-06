@@ -1,17 +1,191 @@
+import crypto from 'node:crypto';
 import { Server } from 'socket.io';
-import { logger } from '../utils/logger.js';
+import { ZodError } from 'zod';
+import { prisma } from '../lib/prisma.js';
+import { AppError } from '../lib/errors.js';
+import { forTenant } from '../lib/tenantDb.js';
+import {
+  startConversationSchema,
+  joinConversationSchema,
+  sendMessageSchema,
+} from '../schemas/realtime.js';
 
 /**
- * STUB — Phase 3 wires the real visitor/agent flows and tenant-scoped rooms.
- * For now this just constructs the io server; server.js does not attach it yet.
+ * Phase 3 — real-time chat.
+ *
+ * Identity is resolved once in the handshake middleware and stashed on
+ * `socket.data`:
+ *   - agent   → { kind: 'agent',   tenantId, agentId, role }   (JWT)
+ *   - visitor → { kind: 'visitor', tenantId }                  (widget API key)
+ *
+ * Rooms are per-conversation (`conversation:<id>`). A conversation belongs to
+ * exactly one tenant, so a socket that is in a conversation room is transitively
+ * tenant-scoped. Every join is tenant-checked server-side via forTenant() — the
+ * client's claim is never trusted. Socket.io removes a socket from all rooms on
+ * disconnect, so there is no manual registry to leak.
  */
-export function initSocket(httpServer) {
-  const io = new Server(httpServer, {
+export function initSocket(app) {
+  const io = new Server(app.server, {
     cors: { origin: process.env.SOCKET_CORS_ORIGIN ?? '*' },
   });
 
+  // --- handshake auth ------------------------------------------------------
+  io.use(async (socket, next) => {
+    const auth = socket.handshake.auth ?? {};
+
+    if (auth.token) {
+      try {
+        const payload = await app.jwt.verify(auth.token);
+        if (!payload?.agentId || !payload?.tenantId) {
+          return next(new Error('unauthorized'));
+        }
+        socket.data = {
+          kind: 'agent',
+          tenantId: payload.tenantId,
+          agentId: payload.agentId,
+          role: payload.role ?? 'AGENT',
+        };
+        return next();
+      } catch {
+        return next(new Error('unauthorized'));
+      }
+    }
+
+    if (auth.widgetApiKey) {
+      const tenant = await prisma.tenant.findUnique({
+        where: { widgetApiKey: auth.widgetApiKey },
+        select: { id: true },
+      });
+      if (!tenant) {
+        return next(new Error('invalid widget api key'));
+      }
+      socket.data = { kind: 'visitor', tenantId: tenant.id };
+      return next();
+    }
+
+    return next(new Error('no credentials'));
+  });
+
+  // --- per-connection handlers ------------------------------------------------
   io.on('connection', (socket) => {
-    logger.debug({ id: socket.id }, 'socket connected (stub — no handlers yet)');
+    app.log.debug({ id: socket.id, kind: socket.data.kind }, 'socket connected');
+
+    const fail = (ack, code, message) => {
+      if (typeof ack === 'function') ack({ ok: false, error: { code, message } });
+    };
+
+    // Wrap a handler so thrown errors become a well-formed ack instead of an
+    // unhandled rejection.
+    const guard = (handler) => async (payload, ack) => {
+      try {
+        await handler(payload, ack);
+      } catch (err) {
+        if (err instanceof ZodError) {
+          return fail(ack, 'VALIDATION_ERROR', 'Validation failed');
+        }
+        if (err instanceof AppError || err?.isAppError) {
+          return fail(ack, err.code ?? 'APP_ERROR', err.message);
+        }
+        app.log.error({ err, socketId: socket.id }, 'socket handler error');
+        return fail(ack, 'INTERNAL_ERROR', 'Internal error');
+      }
+    };
+
+    // start-conversation — visitor only.
+    socket.on(
+      'start-conversation',
+      guard(async (payload, ack) => {
+        if (socket.data.kind !== 'visitor') {
+          return fail(ack, 'FORBIDDEN', 'Only visitors can start a conversation');
+        }
+        startConversationSchema.parse(payload ?? {});
+
+        const db = forTenant(socket.data.tenantId);
+        const conversation = await db.conversation.create({
+          data: { visitorSessionId: crypto.randomUUID(), status: 'AI' },
+        });
+
+        socket.join(conversationRoom(conversation.id));
+        socket.data.conversationId = conversation.id;
+
+        if (typeof ack === 'function') {
+          ack({
+            ok: true,
+            conversationId: conversation.id,
+            sessionId: conversation.visitorSessionId,
+          });
+        }
+      }),
+    );
+
+    // join-conversation — agent only. Tenant-checked server-side.
+    socket.on(
+      'join-conversation',
+      guard(async (payload, ack) => {
+        if (socket.data.kind !== 'agent') {
+          return fail(ack, 'FORBIDDEN', 'Only agents can join a conversation');
+        }
+        const { conversationId } = joinConversationSchema.parse(payload ?? {});
+
+        const db = forTenant(socket.data.tenantId);
+        // Cross-tenant id resolves to null inside forTenant() — do not leak existence.
+        const conversation = await db.conversation.findUnique({ where: { id: conversationId } });
+        if (!conversation) {
+          return fail(ack, 'NOT_FOUND', 'Conversation not found');
+        }
+
+        const messages = await db.message.findMany({
+          where: { conversationId },
+          orderBy: { createdAt: 'asc' },
+          take: 50,
+        });
+
+        socket.join(conversationRoom(conversationId));
+
+        if (typeof ack === 'function') {
+          ack({ ok: true, conversation, messages });
+        }
+      }),
+    );
+
+    // send-message — visitor or agent. Authorized by room membership, not by
+    // any id the client sends.
+    socket.on(
+      'send-message',
+      guard(async (payload, ack) => {
+        const { conversationId, content } = sendMessageSchema.parse(payload ?? {});
+
+        if (!socket.rooms.has(conversationRoom(conversationId))) {
+          return fail(ack, 'FORBIDDEN', 'Not a participant in this conversation');
+        }
+
+        const role = socket.data.kind === 'agent' ? 'AGENT' : 'VISITOR';
+        const db = forTenant(socket.data.tenantId);
+
+        // scopedMessages.create re-asserts the conversation belongs to this
+        // tenant — defense in depth.
+        const message = await db.message.create({
+          data: { conversationId, role, content },
+        });
+
+        // Bump updatedAt so agent dashboards can sort by recency.
+        await db.conversation.update({ where: { id: conversationId }, data: {} });
+
+        io.to(conversationRoom(conversationId)).emit('new-message', {
+          id: message.id,
+          conversationId,
+          role,
+          content: message.content,
+          createdAt: message.createdAt,
+        });
+
+        if (typeof ack === 'function') ack({ ok: true, id: message.id });
+      }),
+    );
+
+    socket.on('disconnect', (reason) => {
+      app.log.debug({ id: socket.id, reason }, 'socket disconnected');
+    });
   });
 
   return io;

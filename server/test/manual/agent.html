@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HiveDesk — Agent test page</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 640px; }
+      h1 { font-size: 1.1rem; }
+      label { display: block; margin: 0.5rem 0 0.15rem; font-weight: 600; }
+      input { width: 100%; padding: 0.4rem; box-sizing: border-box; }
+      button { margin-top: 0.6rem; padding: 0.45rem 0.9rem; cursor: pointer; }
+      #log { border: 1px solid #ccc; border-radius: 6px; padding: 0.5rem; height: 260px;
+             overflow-y: auto; margin-top: 1rem; background: #fafafa; }
+      .msg { padding: 0.2rem 0; border-bottom: 1px solid #eee; }
+      .msg .role { font-weight: 700; }
+      .VISITOR .role { color: #2563eb; }
+      .AGENT .role { color: #16a34a; }
+      .AI .role { color: #9333ea; }
+      .meta { color: #888; }
+    </style>
+  </head>
+  <body>
+    <h1>Agent</h1>
+
+    <label for="url">Server URL</label>
+    <input id="url" value="http://localhost:3000" />
+
+    <label for="token">Agent JWT</label>
+    <input id="token" placeholder="token from POST /auth/signup or /auth/login" />
+
+    <label for="cid">conversationId</label>
+    <input id="cid" placeholder="copy from the widget page" />
+
+    <button id="connect">Connect</button>
+    <button id="join" disabled>Join</button>
+
+    <div id="log"></div>
+
+    <label for="text">Message</label>
+    <input id="text" placeholder="type and press Enter" disabled />
+
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script>
+      let socket = null;
+      const $ = (id) => document.getElementById(id);
+      const log = (line, cls = '') => {
+        const el = document.createElement('div');
+        el.className = 'msg ' + cls;
+        el.innerHTML = line;
+        $('log').appendChild(el);
+        $('log').scrollTop = $('log').scrollHeight;
+      };
+
+      $('connect').onclick = () => {
+        socket = io($('url').value, { auth: { token: $('token').value }, transports: ['websocket'] });
+        socket.on('connect', () => { log('<span class="meta">connected</span>'); $('join').disabled = false; });
+        socket.on('connect_error', (e) => log('<span class="meta">connect_error: ' + e.message + '</span>'));
+        socket.on('disconnect', (r) => log('<span class="meta">disconnected: ' + r + '</span>'));
+        socket.on('new-message', (m) => {
+          log('<span class="role">' + m.role + '</span>: ' + m.content +
+              ' <span class="meta">' + new Date(m.createdAt).toLocaleTimeString() + '</span>', m.role);
+        });
+      };
+
+      $('join').onclick = () => {
+        socket.emit('join-conversation', { conversationId: $('cid').value }, (res) => {
+          if (!res.ok) { log('<span class="meta">join failed: ' + res.error.code + '</span>'); return; }
+          log('<span class="meta">joined — ' + res.messages.length + ' earlier message(s)</span>');
+          for (const m of res.messages) {
+            log('<span class="role">' + m.role + '</span>: ' + m.content, m.role);
+          }
+          $('text').disabled = false;
+        });
+      };
+
+      $('text').addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || !e.target.value.trim()) return;
+        const content = e.target.value;
+        e.target.value = '';
+        socket.emit('send-message', { conversationId: $('cid').value, content }, (res) => {
+          if (!res.ok) log('<span class="meta">send failed: ' + res.error.code + '</span>');
+        });
+      });
+    </script>
+  </body>
+</html>
