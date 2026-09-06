@@ -15,13 +15,12 @@ export default async function conversationRoutes(fastify) {
   fastify.get('/', async (request) => {
     const { status, take, skip } = listConversationsQuery.parse(request.query);
     const db = forTenant(request.tenantId);
-    const rows = await db.conversation.findMany({
-      where: status ? { status } : {},
-      orderBy: { updatedAt: 'desc' },
-      take,
-      skip,
-    });
-    return { conversations: rows };
+    const where = status ? { status } : {};
+    const [rows, total] = await Promise.all([
+      db.conversation.findMany({ where, orderBy: { updatedAt: 'desc' }, take, skip }),
+      db.conversation.count({ where }),
+    ]);
+    return { conversations: rows, pagination: { total, take, skip } };
   });
 
   // GET /conversations/:id — 404 for anything not owned by the caller's tenant

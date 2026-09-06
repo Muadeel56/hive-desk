@@ -37,9 +37,20 @@ Key endpoints in this phase:
 
 - `POST /auth/signup` `{ tenantName, agentEmail, agentPassword, agentName }` → `{ token, tenant: { id, name, widgetApiKey } }`
 - `POST /auth/login` `{ email, password }` → `{ token }`
-- `GET /conversations`, `GET /conversations/:id` — agent JWT, tenant-scoped
+- `GET /conversations` — agent JWT, tenant-scoped → `{ conversations, pagination: { total, take, skip } }`
+- `GET /conversations/:id` — agent JWT, tenant-scoped
+- `GET /tenants/me/settings` — agent JWT → `{ displayName, welcomeMessage, brandColor }` (stored JSON merged over defaults; never leaks `widgetApiKey`)
+- `PATCH /tenants/me/settings` `{ displayName?, welcomeMessage?, brandColor? }` — merges into the stored JSON; empty body → `400 EMPTY_UPDATE`, bad hex → `400 VALIDATION_ERROR`
+- `POST /knowledge-base` `{ question, answer }` → `201 { entry }`
+- `GET /knowledge-base?take=&skip=` → `{ entries, pagination: { total, take, skip } }` (newest first)
+- `GET /knowledge-base/:id` → `{ entry }`; cross-tenant/unknown id → `404 NOT_FOUND`
+- `PATCH /knowledge-base/:id` — partial update; empty body → `400 EMPTY_UPDATE`; cross-tenant id → `404`
+- `DELETE /knowledge-base/:id` → `204` no body; cross-tenant id → `404`
 - `POST /widget/session` — header `x-widget-api-key: <tenant.widgetApiKey>` → `{ sessionId, conversationId }`
 - Everything else returns `501 NOT_IMPLEMENTED` until later phases.
+
+All errors use the shape `{ error: { message, code } }`. Common codes:
+`VALIDATION_ERROR`, `EMPTY_UPDATE`, `NOT_FOUND`, `UNAUTHORIZED`, `CONFLICT`, `INTERNAL_ERROR`.
 
 **Tenant isolation rule:** all tenant data access goes through `forTenant(tenantId)`
 in `src/lib/tenantDb.js`. `tenantId` is resolved only from the JWT or the widget
