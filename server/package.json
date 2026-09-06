@@ -30,6 +30,7 @@
   },
   "devDependencies": {
     "pino-pretty": "^13.0.0",
-    "prisma": "^6.3.1"
+    "prisma": "^6.3.1",
+    "socket.io-client": "^4.8.1"
   }
 }

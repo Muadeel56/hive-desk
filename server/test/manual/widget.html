@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HiveDesk — Widget (visitor) test page</title>
+    <style>
+      body { font: 14px/1.5 system-ui, sans-serif; margin: 0; padding: 1.5rem; max-width: 640px; }
+      h1 { font-size: 1.1rem; }
+      label { display: block; margin: 0.5rem 0 0.15rem; font-weight: 600; }
+      input { width: 100%; padding: 0.4rem; box-sizing: border-box; }
+      button { margin-top: 0.6rem; padding: 0.45rem 0.9rem; cursor: pointer; }
+      #log { border: 1px solid #ccc; border-radius: 6px; padding: 0.5rem; height: 260px;
+             overflow-y: auto; margin-top: 1rem; background: #fafafa; }
+      .msg { padding: 0.2rem 0; border-bottom: 1px solid #eee; }
+      .msg .role { font-weight: 700; }
+      .VISITOR .role { color: #2563eb; }
+      .AGENT .role { color: #16a34a; }
+      .AI .role { color: #9333ea; }
+      .meta { color: #888; }
+    </style>
+  </head>
+  <body>
+    <h1>Widget (visitor)</h1>
+
+    <label for="url">Server URL</label>
+    <input id="url" value="http://localhost:3000" />
+
+    <label for="key">Widget API key</label>
+    <input id="key" placeholder="tenant.widgetApiKey from POST /auth/signup" />
+
+    <button id="connect">Connect</button>
+    <button id="start" disabled>Start conversation</button>
+
+    <p class="meta">conversationId: <span id="cid">—</span> · sessionId: <span id="sid">—</span></p>
+
+    <div id="log"></div>
+
+    <label for="text">Message</label>
+    <input id="text" placeholder="type and press Enter" disabled />
+
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script>
+      let socket = null;
+      let conversationId = null;
+      const $ = (id) => document.getElementById(id);
+      const log = (line, cls = '') => {
+        const el = document.createElement('div');
+        el.className = 'msg ' + cls;
+        el.innerHTML = line;
+        $('log').appendChild(el);
+        $('log').scrollTop = $('log').scrollHeight;
+      };
+
+      $('connect').onclick = () => {
+        socket = io($('url').value, { auth: { widgetApiKey: $('key').value }, transports: ['websocket'] });
+        socket.on('connect', () => { log('<span class="meta">connected</span>'); $('start').disabled = false; });
+        socket.on('connect_error', (e) => log('<span class="meta">connect_error: ' + e.message + '</span>'));
+        socket.on('disconnect', (r) => log('<span class="meta">disconnected: ' + r + '</span>'));
+        socket.on('new-message', (m) => {
+          log('<span class="role">' + m.role + '</span>: ' + m.content +
+              ' <span class="meta">' + new Date(m.createdAt).toLocaleTimeString() + '</span>', m.role);
+        });
+      };
+
+      $('start').onclick = () => {
+        socket.emit('start-conversation', { pageUrl: location.href }, (res) => {
+          if (!res.ok) { log('<span class="meta">start failed: ' + res.error.code + '</span>'); return; }
+          conversationId = res.conversationId;
+          $('cid').textContent = res.conversationId;
+          $('sid').textContent = res.sessionId;
+          $('text').disabled = false;
+        });
+      };
+
+      $('text').addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' || !e.target.value.trim()) return;
+        const content = e.target.value;
+        e.target.value = '';
+        socket.emit('send-message', { conversationId, content }, (res) => {
+          if (!res.ok) log('<span class="meta">send failed: ' + res.error.code + '</span>');
+        });
+      });
+    </script>
+  </body>
+</html>
