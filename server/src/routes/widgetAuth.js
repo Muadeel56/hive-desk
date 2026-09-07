@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { forTenant } from '../lib/tenantDb.js';
+import { tenantRoom } from '../realtime/socket.js';
 import { startSessionSchema } from '../schemas/widget.js';
 
 /**
@@ -19,6 +20,13 @@ export default async function widgetAuthRoutes(fastify) {
     const conversation = await db.conversation.create({
       data: { visitorSessionId, status: 'AI' },
     });
+
+    // Mirror the socket `start-conversation` path: notify agent dashboards for
+    // this tenant so a new conversation appears live. `io` is decorated in
+    // server.js; guard with `?.` for tests that build the app without a socket.
+    request.server.io
+      ?.to(tenantRoom(request.tenantId))
+      .emit('conversation-created', { conversation });
 
     return reply.status(201).send({
       sessionId: visitorSessionId,

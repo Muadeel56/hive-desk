@@ -4,6 +4,10 @@ export const conversationStatus = z.enum(['AI', 'WAITING', 'AGENT', 'CLOSED']);
 
 export const listConversationsQuery = z.object({
   status: conversationStatus.optional(),
+  // Filter to a specific agent's conversations. The literal `me` resolves to the
+  // caller (used by the dashboard's "Mine" tab); any other value filters by that
+  // agent id directly.
+  assignedAgentId: z.string().min(1).optional(),
   take: z.coerce.number().int().min(1).max(100).default(50),
   skip: z.coerce.number().int().min(0).default(0),
 });

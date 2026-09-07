@@ -1,0 +1,134 @@
+.shell {
+  min-height: 100%;
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  grid-template-rows: 1fr;
+}
+
+.topbar {
+  display: none;
+}
+
+.sidebar {
+  grid-column: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-4);
+  background: var(--c-surface);
+  border-right: 1px solid var(--c-border);
+}
+
+.brandFull {
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  padding: var(--sp-2);
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.link {
+  display: block;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-sm);
+  color: var(--c-text);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.link:hover {
+  background: var(--c-surface-2);
+}
+
+.linkActive {
+  background: var(--c-primary);
+  color: var(--c-primary-text);
+}
+
+.footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.agentId {
+  font-size: 12px;
+  color: var(--c-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.main {
+  grid-column: 2;
+  min-width: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.scrim {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    grid-template-columns: 1fr;
+    grid-template-rows: var(--topbar-h) 1fr;
+  }
+
+  .topbar {
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: 0 var(--sp-4);
+    background: var(--c-surface);
+    border-bottom: 1px solid var(--c-border);
+  }
+
+  .hamburger {
+    border: none;
+    background: none;
+    font-size: 20px;
+    padding: var(--sp-1);
+  }
+
+  .brand {
+    font-weight: 800;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(80vw, 260px);
+    transform: translateX(-100%);
+    transition: transform 160ms ease-out;
+    z-index: 50;
+    box-shadow: var(--shadow-2);
+  }
+
+  .sidebarOpen {
+    transform: translateX(0);
+  }
+
+  .main {
+    grid-row: 2;
+    grid-column: 1;
+    min-height: 0;
+  }
+
+  .scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.4);
+    z-index: 40;
+  }
+}
