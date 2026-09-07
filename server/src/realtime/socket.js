@@ -9,6 +9,7 @@ import {
   joinConversationSchema,
   sendMessageSchema,
 } from '../schemas/realtime.js';
+import { respondToVisitorMessage, handoff as aiHandoff } from '../ai/responder.js';
 
 /**
  * Phase 3 — real-time chat.
@@ -66,9 +67,20 @@ export function initSocket(app) {
     return next(new Error('no credentials'));
   });
 
+  // Conversations with an AI reply in flight — a second visitor message while
+  // the model is still thinking must not kick off an overlapping run.
+  const aiInFlight = new Set();
+
   // --- per-connection handlers ------------------------------------------------
   io.on('connection', (socket) => {
     app.log.debug({ id: socket.id, kind: socket.data.kind }, 'socket connected');
+
+    // Agents get their tenant-wide room so dashboards receive tenant-scoped
+    // notifications (conversation-needs-human, conversation-updated) without
+    // having joined every conversation.
+    if (socket.data.kind === 'agent') {
+      socket.join(tenantRoom(socket.data.tenantId));
+    }
 
     const fail = (ack, code, message) => {
       if (typeof ack === 'function') ack({ ok: false, error: { code, message } });
@@ -168,8 +180,12 @@ export function initSocket(app) {
           data: { conversationId, role, content },
         });
 
-        // Bump updatedAt so agent dashboards can sort by recency.
-        await db.conversation.update({ where: { id: conversationId }, data: {} });
+        // Bump updatedAt so agent dashboards can sort by recency; the returned
+        // row also gives us the current status for the AI / human-lock logic.
+        const conversation = await db.conversation.update({
+          where: { id: conversationId },
+          data: {},
+        });
 
         io.to(conversationRoom(conversationId)).emit('new-message', {
           id: message.id,
@@ -178,6 +194,35 @@ export function initSocket(app) {
           content: message.content,
           createdAt: message.createdAt,
         });
+
+        // --- Phase 4: AI auto-reply / permanent human lock ---------------------
+        if (role === 'VISITOR' && conversation.status === 'AI' && !aiInFlight.has(conversationId)) {
+          // Fire-and-forget — the visitor's ack must never wait on the model.
+          aiInFlight.add(conversationId);
+          io.to(conversationRoom(conversationId)).emit('ai-typing', { conversationId });
+          respondToVisitorMessage({ io, tenantId: socket.data.tenantId, conversationId })
+            .catch((err) => {
+              app.log.error({ err, conversationId }, 'ai responder failed — forcing handoff');
+              return aiHandoff({
+                io,
+                tenantId: socket.data.tenantId,
+                conversation: { id: conversationId, status: 'AI' },
+                reason: 'responder-threw',
+              }).catch(() => {});
+            })
+            .finally(() => aiInFlight.delete(conversationId));
+        } else if (role === 'AGENT' && conversation.status !== 'AGENT') {
+          // First agent message locks the conversation to AGENT for good.
+          await db.conversation.update({
+            where: { id: conversationId },
+            data: { status: 'AGENT', assignedAgentId: socket.data.agentId },
+          });
+          io.to(tenantRoom(socket.data.tenantId)).emit('conversation-updated', {
+            conversationId,
+            status: 'AGENT',
+            assignedAgentId: socket.data.agentId,
+          });
+        }
 
         if (typeof ack === 'function') ack({ ok: true, id: message.id });
       }),

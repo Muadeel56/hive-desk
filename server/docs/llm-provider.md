@@ -16,19 +16,22 @@ export LLM_API_KEY=your-key-here
 ./scripts/llm-smoke.sh
 ```
 
-or directly:
+or directly, using the Phase 4 confidence convention (structured JSON output):
 
 ```bash
 curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=$LLM_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{
-    "system_instruction": { "parts": [{ "text": "You are a concise support assistant. If you cannot answer from the given context, say NEEDS_HUMAN." }] },
+    "system_instruction": { "parts": [{ "text": "You are the automated first-line support assistant for \"Acme\". Answer ONLY from the Knowledge Base below. Never use outside knowledge. Never guess.\n\nKnowledge Base:\nQ: What are your opening hours?\nA: We are open 9am to 5pm, Monday to Friday.\n---\n\nRules:\n- If the Knowledge Base clearly answers the visitor'\''s question, reply with a short, friendly answer in the visitor'\''s language.\n- Otherwise — not covered, unsure, visitor asks for a human, visitor is upset, wants to purchase, or has an account-specific problem — do NOT answer.\n- Respond with exactly one JSON object and nothing else:\n  {\"confident\": true, \"answer\": \"<your answer>\"}\n  {\"confident\": false, \"answer\": \"\"}" }] },
     "contents": [
-      { "role": "user", "parts": [{ "text": "What are your opening hours?" }] }
+      { "role": "user", "parts": [{ "text": "What time do you open?" }] }
     ],
-    "generationConfig": { "temperature": 0.2, "maxOutputTokens": 256 }
+    "generationConfig": { "temperature": 0.2, "maxOutputTokens": 800, "responseMimeType": "application/json" }
   }'
 ```
+
+Expected reply text (a single JSON object): `{"confident": true, "answer": "We're open 9am–5pm, Monday to Friday."}`.
+Ask something off-topic instead and it returns `{"confident": false, "answer": ""}`.
 
 ## Request shape
 
@@ -39,12 +42,31 @@ curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flas
     { "role": "user",  "parts": [{ "text": "..." }] },
     { "role": "model", "parts": [{ "text": "..." }] }   // prior AI turn
   ],
-  "generationConfig": { "temperature": 0.2, "maxOutputTokens": 1024 }
+  "generationConfig": {
+    "temperature": 0.2,
+    "maxOutputTokens": 800,          // thinking tokens count against this — keep headroom
+    "responseMimeType": "application/json"  // force a single JSON object, no prose/fences
+  }
 }
 ```
 
 - Roles inside `contents` are **`user`** and **`model`** only — no `system`/`assistant`.
 - System prompt goes in the top-level `system_instruction`, not in `contents`.
+
+## Confidence convention (Phase 4)
+
+`src/ai/responder.js` builds the system prompt (`buildSystemPrompt`) so the model
+must answer with exactly one JSON object:
+
+- `{"confident": true, "answer": "<short answer>"}` — the KB clearly answers the question.
+- `{"confident": false, "answer": ""}` — anything else (not in KB, unsure, wants a
+  human, upset, wants to buy, account-specific).
+
+`parseConfidence(text, finishReason)` treats **all** of the following as *not confident*
+→ hand off to a human: `JSON.parse` fails (after stripping ``` fences), `confident !== true`,
+`answer` empty/whitespace, `finishReason` is `MAX_TOKENS` or `SAFETY`, or a bare
+`NEEDS_HUMAN` sentinel comes back. Transport errors from `aiClient` (`TIMEOUT`,
+`RATE_LIMIT`, `HTTP_ERROR`, `MALFORMED`, `NOT_CONFIGURED`) also hand off.
 
 ## Response shape (success)
 
@@ -83,6 +105,11 @@ Extract the reply with: `json.candidates[0].content.parts[0].text`
 Error responses use HTTP 4xx/5xx with `{ "error": { "code", "message", "status" } }`.
 
 ## Real captured call (A2)
+
+> Historical — captured before the Phase 4 JSON confidence convention. It uses the
+> old `NEEDS_HUMAN` sentinel and `maxOutputTokens: 256`; the sentinel is still
+> accepted by `parseConfidence` as a "not confident" signal, but production now
+> sends the JSON prompt above with `responseMimeType: "application/json"`.
 
 Captured 2026-09-06 against a live key. Model `gemini-2.0-flash` first returned:
 

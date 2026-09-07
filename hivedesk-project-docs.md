@@ -142,14 +142,18 @@ The most genuinely new concept in this project.
 5. Once a human agent sends a message in a conversation, that conversation locks into "human-handled" mode — the AI shouldn't butt back in.
 
 ### Todos
-- [ ] `src/ai/aiClient.js`: wraps the LLM API call — `generateReply(tenantContext, conversationHistory, knowledgeBase)`
-- [ ] Prompt design: include the tenant's KB entries as context, instruct the model to say clearly when it can't help (design this prompt carefully — test it with a few tricky questions)
-- [ ] `src/ai/responder.js`: the decision logic — call AI, parse confidence signal, either auto-reply or flag `needsHuman`
-- [ ] `Conversation` model: add a `mode` field (`ai` / `needsHuman` / `human`) and `handledByAgentId`
-- [ ] Once an agent sends any message in a conversation, flip `mode` to `human` permanently for that conversation
-- [ ] Handle AI API failures gracefully (timeout, rate limit, malformed response) — same retry/error patterns as PitchPulse's cricket API client. If AI totally fails, fall back to `needsHuman` rather than leaving the visitor hanging
+- [x] `src/ai/aiClient.js`: wraps the LLM API call — `generateReply({ system, history, signal })` (transport only; Gemini `generateContent`)
+- [x] Prompt design: `buildSystemPrompt()` injects the tenant's KB entries and forces a single JSON confidence object; `parseConfidence()` is defensive
+- [x] `src/ai/responder.js`: the decision logic — call AI, parse confidence signal, either auto-reply or hand off to a human
+- [x] `Conversation` model: no new columns — the existing `status` enum + `assignedAgentId` already cover it (see mapping below)
+- [x] Once an agent sends any message in a conversation, flip `status` to `AGENT` permanently for that conversation (`src/realtime/socket.js` send-message)
+- [x] Handle AI API failures gracefully (timeout, rate limit, malformed response) — per-attempt `AbortController` timeout + bounded retry/backoff in `aiClient`, typed `AiError`; the responder catches everything and hands off rather than leave the visitor hanging
 
-**Checkpoint:** Ask your test widget a question that's in the knowledge base — AI answers automatically. Ask something completely unrelated — conversation flips to `needsHuman`, and your agent test page shows it needs attention.
+> **Naming:** this doc's `mode = ai / needsHuman / human` is implemented with the
+> existing schema — `Conversation.status = AI / WAITING / AGENT` — and this doc's
+> `handledByAgentId` is `Conversation.assignedAgentId`. No `mode` column was added.
+
+**Checkpoint:** Ask your test widget a question that's in the knowledge base — AI answers automatically. Ask something completely unrelated — conversation flips to `WAITING`, and your agent test page shows it needs attention.
 
 ---
 
