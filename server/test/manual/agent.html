@@ -18,10 +18,16 @@
       .AGENT .role { color: #16a34a; }
       .AI .role { color: #9333ea; }
       .meta { color: #888; }
+      .needsHuman { color: #b91c1c; font-weight: 700; }
+      .typing { color: #9333ea; font-style: italic; }
+      #banner { display: none; margin-top: 0.75rem; padding: 0.4rem 0.6rem; border-radius: 6px;
+                background: #fee2e2; color: #b91c1c; font-weight: 700; }
     </style>
   </head>
   <body>
     <h1>Agent</h1>
+
+    <div id="banner">⚠ needs human</div>
 
     <label for="url">Server URL</label>
     <input id="url" value="http://localhost:3000" />
@@ -60,6 +66,18 @@
         socket.on('new-message', (m) => {
           log('<span class="role">' + m.role + '</span>: ' + m.content +
               ' <span class="meta">' + new Date(m.createdAt).toLocaleTimeString() + '</span>', m.role);
+        });
+
+        // --- Phase 4: tenant-wide notifications (agents auto-join tenant room) ---
+        socket.on('ai-typing', () => log('<span class="typing">AI is typing…</span>'));
+        socket.on('conversation-needs-human', (p) => {
+          $('banner').style.display = 'block';
+          log('⚠ NEEDS HUMAN — ' + p.conversationId + ' (' + p.reason + ')' +
+              (p.lastVisitorMessage ? ': “' + p.lastVisitorMessage + '”' : ''), 'needsHuman');
+        });
+        socket.on('conversation-updated', (p) => {
+          if (p.status === 'AGENT') $('banner').style.display = 'none';
+          log('<span class="meta">conversation ' + p.conversationId + ' → ' + p.status + '</span>');
         });
       };
 

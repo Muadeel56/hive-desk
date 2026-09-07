@@ -41,3 +41,30 @@ server allows `origin: '*'` by default via `SOCKET_CORS_ORIGIN`).
 
 A JWT for a *different* tenant will fail **Join** with `NOT_FOUND` and receive no
 messages — tenant isolation is enforced server-side.
+
+## 4. Phase 4 checkpoint — AI auto-reply & human handoff
+
+Add a couple of knowledge-base entries first (Bearer = the `token` from step 2):
+
+```bash
+curl -s -X POST http://localhost:3000/knowledge-base \
+  -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"question":"What are your opening hours?","answer":"We are open 9am–5pm, Monday to Friday."}'
+```
+
+With `LLM_API_KEY` set in `server/.env`, open `widget.html` and `agent.html` side by
+side. The agent page no longer needs to **Join** a specific conversation to see
+handoffs — on connect it auto-joins its tenant room and listens for
+`conversation-needs-human` / `conversation-updated`.
+
+- **In-KB question** (e.g. "what time do you open?") → the AI answers automatically in
+  the widget (purple `AI` line), the conversation stays AI-handled, and the agent page
+  shows no notification.
+- **Off-topic question** ("do you sell dog food?", "I want to talk to a person") → the
+  conversation flips to `WAITING`, the agent page logs `⚠ NEEDS HUMAN` and shows the
+  banner, and the visitor sees "Thanks — an agent will be with you shortly."
+- **Agent replies** in that `WAITING` conversation (Join it, then type) → it locks to
+  `AGENT` permanently (`conversation-updated` clears the banner); further visitor
+  messages get **no** AI reply.
+- **No `LLM_API_KEY`** (or `LLM_API_URL` pointed at a dead host) → every visitor
+  message hands off cleanly and immediately — no crash, no silent visitor.
