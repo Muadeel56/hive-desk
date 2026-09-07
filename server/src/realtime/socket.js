@@ -120,6 +120,11 @@ export function initSocket(app) {
         socket.join(conversationRoom(conversation.id));
         socket.data.conversationId = conversation.id;
 
+        // Let agent dashboards for this tenant show the new conversation live,
+        // without a refresh or a poll. The full row is sent so the client can
+        // prepend it directly.
+        io.to(tenantRoom(socket.data.tenantId)).emit('conversation-created', { conversation });
+
         if (typeof ack === 'function') {
           ack({
             ok: true,

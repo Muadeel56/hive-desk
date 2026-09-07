@@ -1,52 +1,31 @@
-import { createBrowserRouter, Link } from 'react-router-dom'
-
-// Placeholder routes only — the real agent dashboard is built in Phase 5.
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3000'
-
-function Shell({ title, children }: { title: string; children?: React.ReactNode }) {
-  return (
-    <main
-      style={{
-        fontFamily: 'system-ui, sans-serif',
-        maxWidth: 560,
-        margin: '10vh auto',
-        padding: 24,
-      }}
-    >
-      <h1 style={{ marginBottom: 4 }}>HiveDesk</h1>
-      <p style={{ color: '#64748b', marginTop: 0 }}>{title}</p>
-      {children}
-      <nav style={{ marginTop: 24, display: 'flex', gap: 12 }}>
-        <Link to="/">Home</Link>
-        <Link to="/login">Login</Link>
-      </nav>
-      <p style={{ color: '#94a3b8', fontSize: 12, marginTop: 32 }}>API: {API_URL}</p>
-    </main>
-  )
-}
+import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { AppLayout } from './layout/AppLayout';
+import { RequireAuth } from './auth/RequireAuth';
+import { Login } from './pages/Login';
+import { ConversationsView, SelectConversationPrompt } from './pages/ConversationsView';
+import { ConversationDetail } from './pages/ConversationDetail';
+import { Settings } from './pages/Settings';
 
 export const router = createBrowserRouter([
+  { path: '/login', element: <Login /> },
   {
     path: '/',
     element: (
-      <Shell title="Agent dashboard — placeholder. Real UI lands in Phase 5.">
-        <p>Nothing here yet. This scaffold just proves the app builds and serves.</p>
-      </Shell>
+      <RequireAuth>
+        <AppLayout />
+      </RequireAuth>
     ),
+    children: [
+      {
+        path: '',
+        element: <ConversationsView />,
+        children: [
+          { index: true, element: <SelectConversationPrompt /> },
+          { path: 'conversations/:id', element: <ConversationDetail /> },
+        ],
+      },
+      { path: 'settings', element: <Settings /> },
+    ],
   },
-  {
-    path: '/login',
-    element: (
-      <Shell title="Login — placeholder">
-        <form
-          onSubmit={(e) => e.preventDefault()}
-          style={{ display: 'grid', gap: 8, maxWidth: 280 }}
-        >
-          <input placeholder="Email" type="email" />
-          <input placeholder="Password" type="password" />
-          <button type="submit">Sign in (not wired yet)</button>
-        </form>
-      </Shell>
-    ),
-  },
-])
+  { path: '*', element: <Navigate to="/" replace /> },
+]);

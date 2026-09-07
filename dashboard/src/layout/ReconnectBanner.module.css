@@ -1,0 +1,8 @@
+.banner {
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--c-status-waiting);
+  color: #1f1300;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}

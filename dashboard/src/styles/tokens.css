@@ -1,0 +1,214 @@
+/*
+ * HiveDesk dashboard design tokens + base reset.
+ * One small token set — plain CSS custom properties, no UI kit.
+ * Imported once from main.tsx.
+ */
+:root {
+  /* Palette (Tailwind slate/blue family, matches the widget + server defaults) */
+  --c-bg: #f1f5f9;
+  --c-surface: #ffffff;
+  --c-surface-2: #f8fafc;
+  --c-border: #e2e8f0;
+  --c-border-strong: #cbd5e1;
+  --c-text: #0f172a;
+  --c-text-muted: #64748b;
+  --c-text-faint: #94a3b8;
+
+  --c-primary: #2563eb;
+  --c-primary-hover: #1d4ed8;
+  --c-primary-text: #ffffff;
+
+  --c-danger: #dc2626;
+  --c-danger-hover: #b91c1c;
+
+  /* Status colors */
+  --c-status-ai: #0ea5e9;
+  --c-status-waiting: #f59e0b;
+  --c-status-agent: #16a34a;
+  --c-status-closed: #94a3b8;
+
+  --c-success-bg: #dcfce7;
+  --c-success-text: #166534;
+  --c-danger-bg: #fee2e2;
+  --c-danger-text: #991b1b;
+
+  /* Spacing / radius / typography */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --shadow-1: 0 1px 2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(15, 23, 42, 0.1);
+  --shadow-2: 0 4px 12px rgba(15, 23, 42, 0.12);
+
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  --sidebar-w: 220px;
+  --topbar-h: 56px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-bg: #0b1120;
+    --c-surface: #111827;
+    --c-surface-2: #0f172a;
+    --c-border: #1e293b;
+    --c-border-strong: #334155;
+    --c-text: #e2e8f0;
+    --c-text-muted: #94a3b8;
+    --c-text-faint: #64748b;
+
+    --c-primary: #3b82f6;
+    --c-primary-hover: #2563eb;
+
+    --c-success-bg: #052e16;
+    --c-success-text: #86efac;
+    --c-danger-bg: #450a0a;
+    --c-danger-text: #fca5a5;
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 4px 12px rgba(0, 0, 0, 0.5);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  background: var(--c-bg);
+  color: var(--c-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--c-primary);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/* Shared primitives -------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface);
+  color: var(--c-text);
+  font-weight: 500;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--c-surface-2);
+}
+
+.btn-primary {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: var(--c-primary-text);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--c-primary-hover);
+}
+
+.btn-danger {
+  background: var(--c-danger);
+  border-color: var(--c-danger);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--c-danger-hover);
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-4);
+}
+
+.field label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text-muted);
+}
+
+.input,
+.textarea {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--c-surface);
+}
+
+.input:focus,
+.textarea:focus {
+  outline: 2px solid var(--c-primary);
+  outline-offset: -1px;
+}
+
+.textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.card {
+  background: var(--c-surface);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-1);
+}
+
+.form-msg {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+}
+
+.form-msg-error {
+  background: var(--c-danger-bg);
+  color: var(--c-danger-text);
+}
+
+.form-msg-success {
+  background: var(--c-success-bg);
+  color: var(--c-success-text);
+}

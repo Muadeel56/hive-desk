@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import fastifyCors from '@fastify/cors';
 import { logger } from './utils/logger.js';
 
 import errorHandler from './plugins/errorHandler.js';
@@ -17,6 +18,14 @@ import widgetAuthRoutes from './routes/widgetAuth.js';
  */
 export async function buildApp(opts = {}) {
   const app = Fastify({ loggerInstance: logger, ...opts });
+
+  // CORS for the dashboard SPA (dev on :5173) and the embeddable widget, which
+  // call this API from a different origin. `CORS_ORIGIN` is a comma-separated
+  // allowlist; unset -> reflect any origin (fine for local dev, lock down in prod).
+  await app.register(fastifyCors, {
+    origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true,
+    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  });
 
   await app.register(errorHandler);
   await app.register(authenticate);

@@ -1,0 +1,128 @@
+.pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--c-border);
+  background: var(--c-surface);
+}
+
+.back {
+  border: none;
+  background: none;
+  font-size: 22px;
+  line-height: 1;
+  padding: 0 var(--sp-1);
+  color: var(--c-text-muted);
+  display: none;
+}
+
+.hId {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.assignee {
+  font-size: 13px;
+  color: var(--c-text-muted);
+  margin-right: auto;
+}
+
+.messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  background: var(--c-bg);
+}
+
+.msg {
+  max-width: min(560px, 82%);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--c-border);
+  background: var(--c-surface);
+}
+
+.role_VISITOR {
+  align-self: flex-start;
+}
+
+.role_AI {
+  align-self: flex-start;
+  background: var(--c-surface-2);
+  border-style: dashed;
+}
+
+.role_AGENT {
+  align-self: flex-end;
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: var(--c-primary-text);
+}
+
+.pending {
+  opacity: 0.6;
+}
+
+.msgMeta {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+  font-size: 11px;
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+
+.msgRole {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.msgBody {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.typing {
+  align-self: flex-start;
+  font-size: 13px;
+  color: var(--c-text-muted);
+  font-style: italic;
+}
+
+.composer {
+  border-top: 1px solid var(--c-border);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--c-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.composerRow {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+}
+
+.composerRow .textarea {
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .back {
+    display: block;
+  }
+}
