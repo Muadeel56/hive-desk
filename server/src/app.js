@@ -25,6 +25,9 @@ export async function buildApp(opts = {}) {
   await app.register(fastifyCors, {
     origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',') : true,
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    // The embeddable widget calls `/widget/config` from arbitrary tenant sites
+    // with a custom key header — keep it allowed even once CORS_ORIGIN is pinned.
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-widget-api-key'],
   });
 
   await app.register(errorHandler);

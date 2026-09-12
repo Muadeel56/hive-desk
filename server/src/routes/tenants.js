@@ -9,22 +9,7 @@
 import { forTenant } from '../lib/tenantDb.js';
 import { AppError } from '../lib/errors.js';
 import { updateSettingsSchema } from '../schemas/tenant.js';
-
-const DEFAULT_WELCOME = 'Hi! How can we help?';
-const DEFAULT_BRAND_COLOR = '#2563eb';
-
-/**
- * Public, widget-safe view of a tenant's settings: the stored JSON merged over
- * defaults. Never exposes the raw `settings` column or `widgetApiKey`.
- */
-function normalizeSettings(tenant) {
-  const settings = tenant.settings ?? {};
-  return {
-    displayName: settings.displayName ?? tenant.name,
-    welcomeMessage: settings.welcomeMessage ?? DEFAULT_WELCOME,
-    brandColor: settings.brandColor ?? DEFAULT_BRAND_COLOR,
-  };
-}
+import { normalizeSettings } from '../lib/tenantSettings.js';
 
 export default async function tenantRoutes(fastify) {
   fastify.addHook('preHandler', fastify.authenticate);

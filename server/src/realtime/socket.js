@@ -7,6 +7,7 @@ import { forTenant } from '../lib/tenantDb.js';
 import {
   startConversationSchema,
   joinConversationSchema,
+  resumeConversationSchema,
   sendMessageSchema,
 } from '../schemas/realtime.js';
 import { respondToVisitorMessage, handoff as aiHandoff } from '../ai/responder.js';
@@ -131,6 +132,39 @@ export function initSocket(app) {
             conversationId: conversation.id,
             sessionId: conversation.visitorSessionId,
           });
+        }
+      }),
+    );
+
+    // resume-conversation — visitor only. Lets a reloaded widget rejoin the
+    // conversation it started earlier, without spawning a new one. The stored
+    // visitorSessionId must match, so one visitor can't resume another's thread.
+    socket.on(
+      'resume-conversation',
+      guard(async (payload, ack) => {
+        if (socket.data.kind !== 'visitor') {
+          return fail(ack, 'FORBIDDEN', 'Only visitors can resume a conversation');
+        }
+        const { conversationId, sessionId } = resumeConversationSchema.parse(payload ?? {});
+
+        const db = forTenant(socket.data.tenantId);
+        // Cross-tenant id resolves to null inside forTenant() — do not leak existence.
+        const conversation = await db.conversation.findUnique({ where: { id: conversationId } });
+        if (!conversation || conversation.visitorSessionId !== sessionId) {
+          return fail(ack, 'NOT_FOUND', 'Conversation not found');
+        }
+
+        const messages = await db.message.findMany({
+          where: { conversationId },
+          orderBy: { createdAt: 'asc' },
+          take: 50,
+        });
+
+        socket.join(conversationRoom(conversationId));
+        socket.data.conversationId = conversationId;
+
+        if (typeof ack === 'function') {
+          ack({ ok: true, conversationId, messages });
         }
       }),
     );
