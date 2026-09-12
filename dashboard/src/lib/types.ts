@@ -46,6 +46,24 @@ export interface KbEntry {
   updatedAt: string;
 }
 
+/** Hourly rollup produced by the server's analytics job (Phase 7). */
+export interface AnalyticsSnapshot {
+  id: string;
+  tenantId: string;
+  periodStart: string;
+  periodEnd: string;
+  totalConversations: number;
+  aiResolvedPct: number;
+  avgFirstResponseMs: number | null;
+  activeAgents: number;
+  createdAt: string;
+}
+
+export interface AnalyticsSummary {
+  latest: AnalyticsSnapshot | null;
+  series: AnalyticsSnapshot[];
+}
+
 /** Decoded JWT payload minted by the server (`POST /auth/login`). */
 export interface AgentIdentity {
   agentId: string;

@@ -109,6 +109,7 @@ export function forTenant(tenantId) {
     agent: scopedModel('agent', tenantId),
     conversation: scopedModel('conversation', tenantId),
     knowledgeBaseEntry: scopedModel('knowledgeBaseEntry', tenantId),
+    analyticsSnapshot: scopedModel('analyticsSnapshot', tenantId),
     message: scopedMessages(tenantId),
   };
 }

@@ -41,6 +41,12 @@ export function AppLayout() {
             Conversations
           </NavLink>
           <NavLink
+            to="/analytics"
+            className={({ isActive }) => (isActive ? `${styles.link} ${styles.linkActive}` : styles.link)}
+          >
+            Analytics
+          </NavLink>
+          <NavLink
             to="/settings"
             className={({ isActive }) => (isActive ? `${styles.link} ${styles.linkActive}` : styles.link)}
           >

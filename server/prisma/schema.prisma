@@ -46,6 +46,7 @@ model Tenant {
   agents               Agent[]
   conversations        Conversation[]
   knowledgeBaseEntries KnowledgeBaseEntry[]
+  analyticsSnapshots   AnalyticsSnapshot[]
 }
 
 model Agent {
@@ -79,6 +80,7 @@ model Conversation {
 
   @@index([tenantId])
   @@index([tenantId, status])
+  @@index([tenantId, createdAt])
 }
 
 model Message {
@@ -104,4 +106,24 @@ model KnowledgeBaseEntry {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
+}
+
+// Hourly rollup produced by the analytics BullMQ job (src/jobs/analyticsRollup.js).
+// Each run appends a fresh row per tenant (no unique constraint on
+// tenantId+periodEnd) — the history of rows is itself the trend series the
+// dashboard charts, not something meant to be upserted in place.
+model AnalyticsSnapshot {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  periodStart        DateTime
+  periodEnd          DateTime
+  totalConversations Int
+  aiResolvedPct      Float
+  avgFirstResponseMs Int?
+  activeAgents       Int
+  createdAt          DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, periodEnd])
 }

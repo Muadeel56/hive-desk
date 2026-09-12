@@ -7,6 +7,7 @@
  */
 import { readToken } from './token';
 import type {
+  AnalyticsSummary,
   Conversation,
   ConversationWithMessages,
   KbEntry,
@@ -156,4 +157,8 @@ export function updateKbEntry(
 
 export function deleteKbEntry(id: string): Promise<void> {
   return request(`/knowledge-base/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export function getAnalyticsSummary(range = 24): Promise<AnalyticsSummary> {
+  return request(`/analytics/summary?range=${range}`);
 }
