@@ -126,6 +126,31 @@ export function takeoverConversation(id: string): Promise<{ conversation: Conver
   return request(`/conversations/${encodeURIComponent(id)}/takeover`, { method: 'POST' });
 }
 
+/**
+ * Downloads a conversation's transcript as a Blob. Bypasses the JSON-only
+ * `request()` helper — a plain `<a href>` download can't carry the Bearer
+ * token this app uses instead of a cookie session, so the caller turns the
+ * Blob into an object URL and clicks a temporary link itself.
+ */
+export async function exportConversation(id: string): Promise<Blob> {
+  const token = readToken();
+  const res = await fetch(`${API_BASE}/conversations/${encodeURIComponent(id)}/export`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (res.status === 401) onUnauthorized();
+  if (!res.ok) {
+    let message = `Export failed (${res.status})`;
+    try {
+      const body = (await res.json()) as { error?: { message?: string } };
+      if (body?.error?.message) message = body.error.message;
+    } catch {
+      /* non-JSON error body — keep the generic message */
+    }
+    throw new ApiError(res.status, 'EXPORT_FAILED', message);
+  }
+  return res.blob();
+}
+
 export function getSettings(): Promise<WidgetSettings> {
   return request('/tenants/me/settings');
 }

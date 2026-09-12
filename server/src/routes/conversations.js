@@ -1,7 +1,11 @@
 import { forTenant } from '../lib/tenantDb.js';
 import { AppError } from '../lib/errors.js';
 import { tenantRoom } from '../realtime/socket.js';
-import { listConversationsQuery, conversationIdParam } from '../schemas/conversation.js';
+import {
+  listConversationsQuery,
+  conversationIdParam,
+  exportFormatQuery,
+} from '../schemas/conversation.js';
 
 /**
  * Agent-only. Every handler runs `authenticate` then `tenantContext`, so
@@ -72,6 +76,71 @@ export default async function conversationRoutes(fastify) {
     });
 
     return reply.send({ conversation });
+  });
+
+  // GET /conversations/:id/export — full transcript for an agent's own
+  // tenant. 404 for a cross-tenant/unknown id, same as GET /:id — this is
+  // just a different rendering of the same tenant-scoped read, not a new
+  // trust boundary.
+  //
+  // Messages carry no per-message author id (only the conversation's
+  // assignedAgentId — see prisma/schema.prisma), so every AGENT-role line is
+  // labeled with whichever agent is currently assigned, not necessarily the
+  // one who actually typed it if the conversation was reassigned mid-thread.
+  fastify.get('/:id/export', async (request, reply) => {
+    const { id } = conversationIdParam.parse(request.params);
+    const format = exportFormatQuery.parse(request.query).format;
+    const db = forTenant(request.tenantId);
+
+    const conversation = await db.conversation.findUnique({
+      where: { id },
+      include: {
+        messages: { orderBy: { createdAt: 'asc' } },
+        assignedAgent: { select: { name: true } },
+      },
+    });
+    if (!conversation) {
+      throw new AppError(404, 'Conversation not found', 'NOT_FOUND');
+    }
+
+    const agentName = conversation.assignedAgent?.name ?? null;
+    const senderLabel = (role) => {
+      if (role === 'VISITOR') return 'Visitor';
+      if (role === 'AI') return 'AI Assistant';
+      return agentName ? `Agent ${agentName}` : 'Agent';
+    };
+
+    const transcript = {
+      conversationId: conversation.id,
+      status: conversation.status,
+      createdAt: conversation.createdAt,
+      messages: conversation.messages.map((m) => ({
+        createdAt: m.createdAt,
+        role: m.role,
+        sender: senderLabel(m.role),
+        content: m.content,
+      })),
+    };
+
+    if (format === 'json') {
+      return transcript;
+    }
+
+    const lines = transcript.messages.map(
+      (m) => `[${m.createdAt.toISOString()}] ${m.sender}: ${m.content}`,
+    );
+    const body = [
+      `Conversation ${transcript.conversationId} (status: ${transcript.status})`,
+      `Started: ${transcript.createdAt.toISOString()}`,
+      '',
+      ...lines,
+      '',
+    ].join('\n');
+
+    return reply
+      .header('Content-Type', 'text/plain; charset=utf-8')
+      .header('Content-Disposition', `attachment; filename="conversation-${conversation.id}.txt"`)
+      .send(body);
   });
 
   // --- stubs for later phases -------------------------------------------------

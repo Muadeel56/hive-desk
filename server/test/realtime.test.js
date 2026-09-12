@@ -255,6 +255,38 @@ test('a visitor cannot post to a conversation it did not start', async () => {
   assert.equal(ack.error.code, 'FORBIDDEN');
 });
 
+test('resume/join with a cross-tenant conversationId returns the same NOT_FOUND as a nonexistent id — no enumeration', async () => {
+  const A = await signup('enum-a');
+  const B = await signup('enum-b');
+
+  const visitorA = await connect({ widgetApiKey: A.widgetApiKey });
+  const { conversationId, sessionId } = await emit(visitorA, 'start-conversation', {});
+
+  // Tenant B's own widget key + tenant A's real conversationId (wrong sessionId
+  // guess) must look identical to a made-up id — same code, no distinguishing
+  // detail that would let an attacker confirm the id belongs to another tenant.
+  const visitorB = await connect({ widgetApiKey: B.widgetApiKey });
+  const crossTenantResume = await emit(visitorB, 'resume-conversation', {
+    conversationId,
+    sessionId,
+  });
+  const madeUpResume = await emit(visitorB, 'resume-conversation', {
+    conversationId: 'not-a-real-id-at-all',
+    sessionId: 'also-fake',
+  });
+  assert.equal(crossTenantResume.ok, false);
+  assert.equal(crossTenantResume.error.code, 'NOT_FOUND');
+  assert.equal(madeUpResume.error.code, crossTenantResume.error.code);
+  assert.deepEqual(crossTenantResume.error, madeUpResume.error, 'identical error for both cases');
+
+  const bAgent = await connect({ token: B.token });
+  const crossTenantJoin = await emit(bAgent, 'join-conversation', { conversationId });
+  const madeUpJoin = await emit(bAgent, 'join-conversation', { conversationId: 'not-a-real-id-at-all' });
+  assert.equal(crossTenantJoin.ok, false);
+  assert.equal(crossTenantJoin.error.code, 'NOT_FOUND');
+  assert.deepEqual(crossTenantJoin.error, madeUpJoin.error, 'identical error for both cases');
+});
+
 test('connections with no / invalid credentials are refused', async () => {
   await assert.rejects(connect({ widgetApiKey: 'not-a-real-key-zzzzzzzzzzzz' }));
   await assert.rejects(connect({ token: 'garbage.jwt.value' }));
@@ -352,6 +384,120 @@ test('agent reply locks the conversation to AGENT and the AI never speaks again'
   await emit(visitor, 'send-message', { conversationId, content: 'and what are your opening hours?' });
   await sleep(700);
   assert.equal(aiSpoke, false);
+});
+
+// --- Phase 10: typing indicators & read receipts -------------------------
+
+test('typing:start/stop reach the other party in the same conversation, not a different tenant', async () => {
+  const A = await signup('typing-a');
+  const B = await signup('typing-b');
+
+  const agentA = await connect({ token: A.token });
+  const visitorA = await connect({ widgetApiKey: A.widgetApiKey });
+  const { conversationId } = await emit(visitorA, 'start-conversation', {});
+  await emit(agentA, 'join-conversation', { conversationId });
+
+  // Cross-tenant leak check: B's agent must never see A's typing events.
+  const bAgent = await connect({ token: B.token });
+  let leaked = false;
+  bAgent.on('typing', () => {
+    leaked = true;
+  });
+
+  const agentGotTyping = waitFor(agentA, 'typing', (p) => p.conversationId === conversationId);
+  const startAck = await emit(visitorA, 'typing:start', { conversationId });
+  assert.equal(startAck.ok, true);
+  const started = await agentGotTyping;
+  assert.equal(started.from, 'visitor');
+  assert.equal(started.typing, true);
+
+  const agentGotStop = waitFor(agentA, 'typing', (p) => p.conversationId === conversationId && !p.typing);
+  const stopAck = await emit(visitorA, 'typing:stop', { conversationId });
+  assert.equal(stopAck.ok, true);
+  const stopped = await agentGotStop;
+  assert.equal(stopped.typing, false);
+
+  await sleep(300);
+  assert.equal(leaked, false, "tenant B agent must not receive tenant A's typing events");
+});
+
+test('typing:start with no matching typing:stop auto-expires server-side', async () => {
+  const A = await signup('typing-expire');
+  const agent = await connect({ token: A.token });
+  const visitor = await connect({ widgetApiKey: A.widgetApiKey });
+  const { conversationId } = await emit(visitor, 'start-conversation', {});
+  await emit(agent, 'join-conversation', { conversationId });
+
+  const autoStop = waitFor(
+    agent,
+    'typing',
+    (p) => p.conversationId === conversationId && !p.typing,
+    7000,
+  );
+  await emit(visitor, 'typing:start', { conversationId });
+  // No typing:stop sent — the server's TYPING_TIMEOUT_MS (5s) must fire it.
+  const stopped = await autoStop;
+  assert.equal(stopped.typing, false);
+});
+
+test('typing events require room membership — cannot be spoofed for a conversation not joined', async () => {
+  const A = await signup('typing-forbidden');
+  const visitor = await connect({ widgetApiKey: A.widgetApiKey });
+  const { conversationId } = await emit(visitor, 'start-conversation', {});
+
+  const otherVisitor = await connect({ widgetApiKey: A.widgetApiKey });
+  const ack = await emit(otherVisitor, 'typing:start', { conversationId });
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'FORBIDDEN');
+});
+
+test('message:read marks messages up to the given id and broadcasts messages-read, tenant-scoped', async () => {
+  const A = await signup('read-a');
+  const B = await signup('read-b');
+
+  const agent = await connect({ token: A.token });
+  const visitor = await connect({ widgetApiKey: A.widgetApiKey });
+  const { conversationId } = await emit(visitor, 'start-conversation', {});
+  await emit(agent, 'join-conversation', { conversationId });
+
+  const m1 = await emit(visitor, 'send-message', { conversationId, content: 'first' });
+  const m2 = await emit(visitor, 'send-message', { conversationId, content: 'second' });
+  assert.equal(m1.ok, true);
+  assert.equal(m2.ok, true);
+
+  // Cross-tenant leak check: B's agent (unrelated) must never see this broadcast.
+  const bAgent = await connect({ token: B.token });
+  let leaked = false;
+  bAgent.on('messages-read', () => {
+    leaked = true;
+  });
+
+  const visitorSawRead = waitFor(visitor, 'messages-read', (p) => p.conversationId === conversationId);
+  const readAck = await emit(agent, 'message:read', { conversationId, upToMessageId: m2.id });
+  assert.equal(readAck.ok, true);
+  const readEvent = await visitorSawRead;
+  assert.equal(readEvent.upToMessageId, m2.id);
+  assert.ok(readEvent.readAt);
+
+  const rows = await prisma.message.findMany({ where: { conversationId }, orderBy: { createdAt: 'asc' } });
+  assert.ok(rows.every((r) => r.readAt !== null), 'both messages should now be marked read');
+
+  await sleep(300);
+  assert.equal(leaked, false, "tenant B agent must not receive tenant A's read receipts");
+});
+
+test('message:read with a cross-tenant conversationId is rejected, not silently a no-op', async () => {
+  const A = await signup('read-forbidden-a');
+  const B = await signup('read-forbidden-b');
+
+  const visitorA = await connect({ widgetApiKey: A.widgetApiKey });
+  const { conversationId } = await emit(visitorA, 'start-conversation', {});
+  const sent = await emit(visitorA, 'send-message', { conversationId, content: 'hi' });
+
+  const bAgent = await connect({ token: B.token });
+  const ack = await emit(bAgent, 'message:read', { conversationId, upToMessageId: sent.id });
+  assert.equal(ack.ok, false);
+  assert.equal(ack.error.code, 'FORBIDDEN');
 });
 
 test('a transient 429 from the LLM is retried -> exactly one AI reply', async () => {

@@ -15,13 +15,35 @@ import { AppError } from '../lib/errors.js';
  *
  * tenantId is NEVER read from the request body, query string, or route params.
  */
+
+/**
+ * Binds a child logger carrying `tenantId` and the templated route (e.g.
+ * `/conversations/:id`, not the raw URL with real ids in it) onto the
+ * request, once tenantId is known — this is the one place all three
+ * resolution branches converge, so every tenant-scoped route gets these
+ * fields on every log line for free without a second hook.
+ */
+function bindTenantLogger(request, reply) {
+  const child = request.log.child({
+    tenantId: request.tenantId,
+    route: request.routeOptions?.url ?? request.url,
+  });
+  // Fastify's own "request completed"/"request errored" lines are logged via
+  // `reply.log`, a separate reference from `request.log` (see
+  // fastify/lib/log-controller.js) — both must be reassigned or only handler-
+  // level logging (not Fastify's own access-log lines) would carry these fields.
+  request.log = child;
+  reply.log = child;
+}
+
 async function tenantContext(fastify) {
   fastify.decorateRequest('tenantId', null);
   fastify.decorateRequest('tenant', null);
 
-  fastify.decorate('tenantContext', async function (request) {
+  fastify.decorate('tenantContext', async function (request, reply) {
     if (request.agent?.tenantId) {
       request.tenantId = request.agent.tenantId;
+      bindTenantLogger(request, reply);
       return;
     }
 
@@ -36,6 +58,7 @@ async function tenantContext(fastify) {
       }
       request.tenantId = tenant.id;
       request.tenant = tenant;
+      bindTenantLogger(request, reply);
       return;
     }
 

@@ -95,6 +95,11 @@
   word-break: break-word;
 }
 
+.readMarker {
+  margin-left: auto;
+  opacity: 0.7;
+}
+
 .typing {
   align-self: flex-start;
   font-size: 13px;

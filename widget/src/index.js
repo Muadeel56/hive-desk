@@ -157,6 +157,7 @@ import { io } from 'socket.io-client';
     if (isOpen) {
       scrollToBottom();
       if (!inputEl.disabled) inputEl.focus();
+      if (lastInboundId) markRead(lastInboundId);
     }
   }
   bubble.addEventListener('click', function () {
@@ -219,6 +220,8 @@ import { io } from 'socket.io-client';
   var seenIds = Object.create(null);
   var pending = []; // optimistic visitor bubbles awaiting their server echo
   var typingTimer = null;
+  var lastInboundId = null; // most recent AI/AGENT message id, for mark-on-open
+  var lastReadSentId = null; // dedupe repeated message:read emits
 
   var socket = io(apiUrl, {
     auth: { widgetApiKey: tenantKey },
@@ -243,11 +246,28 @@ import { io } from 'socket.io-client';
     if (!m || !m.conversationId || m.conversationId !== conversationId) return;
     hideTyping();
     ingest(m);
+    if (m.role !== 'VISITOR' && isOpen && document.visibilityState === 'visible') {
+      markRead(m.id);
+    }
   });
 
   socket.on('ai-typing', function (m) {
     if (!m || m.conversationId !== conversationId) return;
     showTyping();
+  });
+
+  // Agent typing indicator — same dots UI as ai-typing, driven by the
+  // explicit typing:true/false flag rather than a fixed timeout, since the
+  // server already auto-expires a stale typing:start server-side.
+  socket.on('typing', function (p) {
+    if (!p || p.conversationId !== conversationId || p.from !== 'agent') return;
+    if (p.typing) showTyping();
+    else hideTyping();
+  });
+
+  socket.on('messages-read', function (p) {
+    if (!p || p.conversationId !== conversationId) return;
+    markSeenUpTo(p.upToMessageId);
   });
 
   function bootstrapConversation() {
@@ -280,10 +300,31 @@ import { io } from 'socket.io-client';
         sessionId = res.sessionId;
         saveSession({ conversationId: conversationId, sessionId: sessionId });
         setComposerEnabled(true);
+      } else if (res && res.error && res.error.code === 'RATE_LIMITED') {
+        applyRateLimitBackoff(res.error.retryAfterMs, startConversation);
       } else {
         setStatus('Unable to connect');
       }
     });
+  }
+
+  // --- rate-limit backoff ---------------------------------------------
+  // The server throttles session-start / message-send far more tightly than
+  // a normal connection hiccup — hammering retries would only extend the
+  // block. Show a "please wait" state and disable the composer for the
+  // server-given window instead, then optionally retry once it lapses.
+  var rateLimitTimer = null;
+  function applyRateLimitBackoff(retryAfterMs, retry) {
+    var waitMs = typeof retryAfterMs === 'number' && retryAfterMs > 0 ? retryAfterMs : 5000;
+    setComposerEnabled(false);
+    setStatus('Please wait a moment…');
+    if (rateLimitTimer) clearTimeout(rateLimitTimer);
+    rateLimitTimer = setTimeout(function () {
+      rateLimitTimer = null;
+      setStatus(null);
+      if (conversationId) setComposerEnabled(true);
+      if (typeof retry === 'function') retry();
+    }, waitMs);
   }
 
   function hydrate(list) {
@@ -320,7 +361,26 @@ import { io } from 'socket.io-client';
     el.textContent = content;
     messagesEl.appendChild(el);
     scrollToBottom();
+    if (side === 'in' && id) lastInboundId = id;
     return el;
+  }
+
+  // --- read receipts ---------------------------------------------------
+  function markRead(messageId) {
+    if (!messageId || messageId === lastReadSentId || !conversationId) return;
+    lastReadSentId = messageId;
+    socket.emit('message:read', { conversationId: conversationId, upToMessageId: messageId });
+  }
+
+  // The server marks every message up to and including `messageId` as read
+  // (mark-through), but the UI only needs to show a "Seen" badge on the most
+  // recent visitor bubble that was covered — clear any earlier badge first
+  // so exactly one bubble carries it, like most chat UIs.
+  function markSeenUpTo(messageId) {
+    var prev = messagesEl.querySelector('.hd-seen');
+    if (prev) prev.classList.remove('hd-seen');
+    var el = messagesEl.querySelector('[data-id="' + messageId + '"]');
+    if (el && el.classList.contains('hd-out')) el.classList.add('hd-seen');
   }
 
   // --- sending ---------------------------------------------------
@@ -338,6 +398,8 @@ import { io } from 'socket.io-client';
     var entry = { content: text, el: el };
     pending.push(entry);
 
+    sendTypingStop();
+
     socket.emit(
       'send-message',
       { conversationId: conversationId, content: text },
@@ -347,13 +409,46 @@ import { io } from 'socket.io-client';
           if (idx !== -1) pending.splice(idx, 1);
           el.classList.remove('hd-pending');
           el.classList.add('hd-failed');
-          el.title = 'Not delivered';
+          if (res && res.error && res.error.code === 'RATE_LIMITED') {
+            el.title = 'Sending too fast — please wait a moment';
+            applyRateLimitBackoff(res.error.retryAfterMs);
+          } else {
+            el.title = 'Not delivered';
+          }
         }
       },
     );
   });
 
-  // --- typing indicator ---------------------------------------------
+  // Outgoing typing indicator — throttled emit while typing, auto-stop after
+  // a pause or on send. Mirrors the dashboard's own timers (agent side) so
+  // both ends of the conversation behave the same; the server also
+  // auto-expires a stale typing:start if a typing:stop is ever missed.
+  var TYPING_RESEND_INTERVAL_MS = 2000;
+  var TYPING_STOP_DELAY_MS = 3000;
+  var lastTypingSentAt = 0;
+  var typingStopTimer = null;
+
+  function sendTypingStop() {
+    if (typingStopTimer) {
+      clearTimeout(typingStopTimer);
+      typingStopTimer = null;
+    }
+    if (conversationId) socket.emit('typing:stop', { conversationId: conversationId });
+  }
+
+  inputEl.addEventListener('input', function () {
+    if (!conversationId || inputEl.disabled) return;
+    var now = Date.now();
+    if (inputEl.value.trim() && now - lastTypingSentAt > TYPING_RESEND_INTERVAL_MS) {
+      lastTypingSentAt = now;
+      socket.emit('typing:start', { conversationId: conversationId });
+    }
+    if (typingStopTimer) clearTimeout(typingStopTimer);
+    typingStopTimer = setTimeout(sendTypingStop, TYPING_STOP_DELAY_MS);
+  });
+
+  // --- typing indicator (incoming: AI or agent) ----------------------
   function showTyping() {
     typingEl.hidden = false;
     scrollToBottom();
@@ -459,6 +554,9 @@ import { io } from 'socket.io-client';
       'border-bottom-right-radius:4px;}',
       '.hd-pending{opacity:.6;}',
       '.hd-failed{opacity:.6;background:#dc2626;}',
+      '.hd-seen{position:relative;margin-bottom:14px;}',
+      '.hd-seen::after{content:"Seen";position:absolute;right:2px;bottom:-14px;',
+      'font-size:10px;color:#94a3b8;}',
 
       '.hd-typing{display:flex;gap:4px;padding:4px 20px 10px;background:#f8fafc;}',
       '.hd-typing[hidden]{display:none;}',
