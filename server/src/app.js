@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import fastifyCors from '@fastify/cors';
 import { logger } from './utils/logger.js';
+import { prisma } from './lib/prisma.js';
 
 import errorHandler from './plugins/errorHandler.js';
 import authenticate from './plugins/authenticate.js';
@@ -36,6 +37,22 @@ export async function buildApp(opts = {}) {
   await app.register(tenantContext);
 
   app.get('/health', async () => ({ status: 'ok', service: 'hivedesk-server' }));
+
+  // Readiness probe: unlike /health (pure liveness, always fast, no
+  // dependencies), this actually pings Postgres. Intended for orchestrator
+  // readiness checks / the manual outage test in docs/resilience.md, not for
+  // high-frequency liveness polling.
+  app.get('/health/ready', async (request, reply) => {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return { status: 'ok', service: 'hivedesk-server' };
+    } catch (err) {
+      request.log.error({ err }, 'readiness check failed');
+      return reply.status(503).send({
+        error: { message: 'Service temporarily unavailable', code: 'SERVICE_UNAVAILABLE' },
+      });
+    }
+  });
 
   await app.register(authRoutes, { prefix: '/auth' });
   await app.register(tenantRoutes, { prefix: '/tenants' });

@@ -3,12 +3,12 @@ import { Queue } from 'bullmq';
 import { logger } from '../utils/logger.js';
 
 /**
- * BullMQ needs its own Redis connection with settings the shared
- * `src/cache/redisClient.js` singleton doesn't use: `maxRetriesPerRequest`
+ * BullMQ needs its own dedicated Redis connection: `maxRetriesPerRequest`
  * must be `null` (BullMQ manages retries itself) and offline queueing must
- * stay enabled, whereas the shared client sets `maxRetriesPerRequest: 2` /
- * `enableOfflineQueue: false` for request-path use. Same REDIS_URL, separate
- * connection.
+ * stay enabled so jobs added while Redis is briefly down are queued
+ * client-side rather than rejected. There is no other shared Redis client in
+ * this codebase (server/src/cache/redisClient.js was removed as dead code —
+ * see server/docs/resilience.md) — this is the only Redis connection.
  */
 export const connection = new IORedis(process.env.REDIS_URL ?? 'redis://localhost:6379', {
   maxRetriesPerRequest: null,

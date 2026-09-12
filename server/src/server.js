@@ -1,7 +1,6 @@
 import { buildApp } from './app.js';
 import { logger } from './utils/logger.js';
 import { prisma } from './lib/prisma.js';
-import { redis } from './cache/redisClient.js';
 import { initSocket } from './realtime/socket.js';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -27,9 +26,6 @@ async function shutdown(signal) {
     io.close();
     await app.close();
     await prisma.$disconnect();
-    if (redis.status === 'ready' || redis.status === 'connecting') {
-      redis.disconnect();
-    }
   } finally {
     process.exit(0);
   }

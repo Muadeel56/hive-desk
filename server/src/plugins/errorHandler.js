@@ -1,6 +1,7 @@
 import fp from 'fastify-plugin';
 import { ZodError } from 'zod';
 import { AppError } from '../lib/errors.js';
+import { isPrismaUnavailable } from '../lib/prismaErrors.js';
 
 /**
  * Central error handler. Response shape is always:
@@ -10,6 +11,7 @@ import { AppError } from '../lib/errors.js';
  * - AppError                               -> its own statusCode + code
  * - @fastify/jwt auth errors               -> 401 UNAUTHORIZED
  * - Prisma unique-constraint violation     -> 409 CONFLICT
+ * - Prisma connection-level errors         -> 503 SERVICE_UNAVAILABLE (never leak raw message)
  * - everything else                        -> 500 INTERNAL_ERROR (logged, non-leaky)
  */
 async function errorHandler(fastify) {
@@ -48,6 +50,16 @@ async function errorHandler(fastify) {
     if (err.code === 'P2002') {
       return reply.status(409).send({
         error: { message: 'Resource already exists', code: 'CONFLICT' },
+      });
+    }
+
+    // Prisma connection-level errors: the database is unreachable/unresponsive.
+    // Never leak the raw Prisma message — respond with a generic 503 and log
+    // the real error server-side for diagnosis.
+    if (isPrismaUnavailable(err)) {
+      request.log.error({ err: err.message, code: err.code }, 'database unavailable');
+      return reply.status(503).send({
+        error: { message: 'Service temporarily unavailable', code: 'SERVICE_UNAVAILABLE' },
       });
     }
 
