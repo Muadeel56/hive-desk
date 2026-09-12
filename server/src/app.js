@@ -11,6 +11,7 @@ import tenantRoutes from './routes/tenants.js';
 import conversationRoutes from './routes/conversations.js';
 import knowledgeBaseRoutes from './routes/knowledgeBase.js';
 import widgetAuthRoutes from './routes/widgetAuth.js';
+import analyticsRoutes from './routes/analytics.js';
 
 /**
  * Builds the Fastify instance (plugins + routes) without listening.
@@ -41,6 +42,7 @@ export async function buildApp(opts = {}) {
   await app.register(conversationRoutes, { prefix: '/conversations' });
   await app.register(knowledgeBaseRoutes, { prefix: '/knowledge-base' });
   await app.register(widgetAuthRoutes, { prefix: '/widget' });
+  await app.register(analyticsRoutes, { prefix: '/analytics' });
 
   return app;
 }

@@ -12,6 +12,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "seed": "node prisma/seed.js",
+    "worker": "node src/jobs/worker.js",
     "test": "node --test"
   },
   "prisma": {
@@ -22,6 +23,7 @@
     "@fastify/jwt": "^9.0.4",
     "@prisma/client": "^6.3.1",
     "bcryptjs": "^3.0.2",
+    "bullmq": "^5.81.5",
     "fastify": "^5.2.1",
     "fastify-plugin": "^5.0.1",
     "ioredis": "^5.4.2",

@@ -1,0 +1,71 @@
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: var(--sp-5) var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+}
+
+.h1 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.h2 {
+  margin: 0 0 var(--sp-4);
+  font-size: 16px;
+}
+
+.card {
+  padding: var(--sp-5);
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--sp-4);
+}
+
+.tile {
+  padding: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.tileValue {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.tileLabel {
+  font-size: 13px;
+  color: var(--c-text-muted);
+}
+
+.chart {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.footnote {
+  margin: 0;
+  font-size: 13px;
+  color: var(--c-text-faint);
+}
+
+/* Accessible text alternative to the SVG chart — visible to screen readers
+   and other assistive tech, not sighted users. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

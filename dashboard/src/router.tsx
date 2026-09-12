@@ -5,6 +5,7 @@ import { Login } from './pages/Login';
 import { ConversationsView, SelectConversationPrompt } from './pages/ConversationsView';
 import { ConversationDetail } from './pages/ConversationDetail';
 import { Settings } from './pages/Settings';
+import { AnalyticsView } from './pages/AnalyticsView';
 
 export const router = createBrowserRouter([
   { path: '/login', element: <Login /> },
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
           { path: 'conversations/:id', element: <ConversationDetail /> },
         ],
       },
+      { path: 'analytics', element: <AnalyticsView /> },
       { path: 'settings', element: <Settings /> },
     ],
   },
