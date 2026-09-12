@@ -35,12 +35,22 @@ and what was deliberately deferred.
   code: it was imported exactly once (in `server.js`'s shutdown handler),
   used `lazyConnect: true` so it never actually opened a connection, and
   nothing else in the codebase (no rate limiter, no Socket.io adapter)
-  depended on it, despite a comment in that file claiming otherwise. It has
-  been removed.
-- There is no rate-limiting in this codebase today. If rate-limiting is
-  added in a future phase, wire a fresh Redis client into
-  `@fastify/rate-limit` (or equivalent) at that time rather than
-  resurrecting the removed client.
+  depended on it, despite a comment in that file claiming otherwise. It was
+  removed in Phase 8.
+- Phase 10 added rate limiting on the public widget surface, which needed
+  exactly this: a fresh, dedicated Redis client (`server/src/lib/redisClient.js`,
+  also `lazyConnect: true` — importing it must not itself open a socket, since
+  it's pulled in transitively by files that never touch rate limiting, e.g.
+  `src/ai/responder.js` -> `realtime/socket.js` -> `realtime/rateLimiter.js`)
+  wired into `@fastify/rate-limit` for the REST `/widget/session`/`/config`
+  routes (registered only inside `routes/widgetAuth.js`'s plugin scope, never
+  globally) and into a small Lua-script-backed limiter
+  (`server/src/realtime/rateLimiter.js`) for the Socket.io events that carry
+  the real widget traffic (`start-conversation`, `send-message`,
+  `resume-conversation`, `join-conversation`). Both fail open on a Redis
+  error — rate limiting is a defense, not a hard dependency — and the
+  connection's lifecycle is tied to `app.close()` via an `onClose` hook so
+  neither a graceful production shutdown nor a test's teardown leaks it.
 
 ## Socket.io
 

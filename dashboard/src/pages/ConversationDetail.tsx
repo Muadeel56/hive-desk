@@ -5,7 +5,7 @@ import { useAuth } from '../auth/context';
 import { useToast } from '../components/toast-context';
 import { StatusBadge } from '../components/StatusBadge';
 import { ErrorState, Spinner } from '../components/States';
-import { ApiError, getConversation, takeoverConversation } from '../lib/api';
+import { ApiError, exportConversation, getConversation, takeoverConversation } from '../lib/api';
 import { formatTime } from '../lib/time';
 import type { Conversation, Message } from '../lib/types';
 import { emit, subscribe } from '../realtime/socket';
@@ -25,6 +25,25 @@ interface SendAck {
   id?: string;
   error?: { code: string; message: string };
 }
+
+interface TypingEvent {
+  conversationId: string;
+  from: 'visitor' | 'agent';
+  typing: boolean;
+}
+
+interface MessagesReadEvent {
+  conversationId: string;
+  upToMessageId: string;
+  readAt: string;
+}
+
+// The visitor's tab going quiet for this long without a keystroke is treated
+// as "stopped typing" — mirrors the widget's own timer (see widget/src/index.js)
+// so both sides behave the same even though only the dashboard side matters
+// here (the agent is the one whose typing state this component reports).
+const TYPING_STOP_DELAY_MS = 3000;
+const TYPING_RESEND_INTERVAL_MS = 2000;
 
 function mergeIncoming(list: UiMessage[], incoming: Message): UiMessage[] {
   if (list.some((m) => m.id === incoming.id)) return list;
@@ -52,15 +71,21 @@ export function ConversationDetail() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [aiTyping, setAiTyping] = useState(false);
+  const [visitorTyping, setVisitorTyping] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [takingOver, setTakingOver] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const stick = useRef(true);
   const tempSeq = useRef(0);
   const typingTimer = useRef<number | undefined>(undefined);
+  const visitorTypingTimer = useRef<number | undefined>(undefined);
+  const lastTypingSentAt = useRef(0);
+  const typingStopTimer = useRef<number | undefined>(undefined);
+  const lastReadSentId = useRef<string | null>(null);
 
   // --- initial load: join over the socket, fall back to REST ---------------
   useEffect(() => {
@@ -70,6 +95,7 @@ export function ConversationDetail() {
     setMessages([]);
     setConversation(null);
     stick.current = true;
+    lastReadSentId.current = null;
 
     emit<JoinAck>('join-conversation', { conversationId: id })
       .then((ack) => {
@@ -109,12 +135,33 @@ export function ConversationDetail() {
         if (msg.conversationId !== id) return;
         setMessages((list) => mergeIncoming(list, msg));
         setAiTyping(false);
+        if (msg.role === 'VISITOR' && document.visibilityState === 'visible') {
+          void emit('message:read', { conversationId: id, upToMessageId: msg.id }).catch(() => {});
+        }
       }),
       subscribe<{ conversationId: string }>('ai-typing', (p) => {
         if (p.conversationId !== id) return;
         setAiTyping(true);
         window.clearTimeout(typingTimer.current);
         typingTimer.current = window.setTimeout(() => setAiTyping(false), 4000);
+      }),
+      subscribe<TypingEvent>('typing', (p) => {
+        if (p.conversationId !== id || p.from !== 'visitor') return;
+        window.clearTimeout(visitorTypingTimer.current);
+        setVisitorTyping(p.typing);
+        if (p.typing) {
+          // Safety net on top of the server's own auto-expire — a missed
+          // typing:stop must not leave this indicator stuck.
+          visitorTypingTimer.current = window.setTimeout(() => setVisitorTyping(false), 6000);
+        }
+      }),
+      subscribe<MessagesReadEvent>('messages-read', (p) => {
+        if (p.conversationId !== id) return;
+        setMessages((list) => {
+          const cutoff = list.find((m) => m.id === p.upToMessageId)?.createdAt;
+          if (!cutoff) return list;
+          return list.map((m) => (m.createdAt <= cutoff ? { ...m, readAt: p.readAt } : m));
+        });
       }),
       subscribe<{ conversationId: string; status?: Conversation['status']; assignedAgentId?: string | null }>(
         'conversation-updated',
@@ -136,8 +183,25 @@ export function ConversationDetail() {
     return () => {
       offs.forEach((off) => off());
       window.clearTimeout(typingTimer.current);
+      window.clearTimeout(visitorTypingTimer.current);
     };
   }, [id]);
+
+  // Mark the visitor's messages read on open / when the tab regains focus,
+  // so a conversation opened while backgrounded doesn't falsely mark-read.
+  useEffect(() => {
+    const markRead = () => {
+      if (document.visibilityState !== 'visible') return;
+      const lastVisitor = [...messages].reverse().find((m) => m.role === 'VISITOR' && !m.readAt);
+      if (lastVisitor && lastVisitor.id !== lastReadSentId.current) {
+        lastReadSentId.current = lastVisitor.id;
+        void emit('message:read', { conversationId: id, upToMessageId: lastVisitor.id }).catch(() => {});
+      }
+    };
+    markRead();
+    document.addEventListener('visibilitychange', markRead);
+    return () => document.removeEventListener('visibilitychange', markRead);
+  }, [id, messages]);
 
   // --- auto-scroll unless the user scrolled up --------------------------
   const onScroll = () => {
@@ -151,6 +215,16 @@ export function ConversationDetail() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [messages, aiTyping]);
+
+  // --- typing indicator (outgoing) ---------------------------------------
+  // Throttled emit while typing, auto-stop after a pause or on send —
+  // mirrors the widget's own timers (widget/src/index.js) so both sides
+  // behave the same.
+  const sendTypingStop = useCallback(() => {
+    window.clearTimeout(typingStopTimer.current);
+    typingStopTimer.current = undefined;
+    void emit('typing:stop', { conversationId: id }).catch(() => {});
+  }, [id]);
 
   const send = useCallback(async () => {
     const content = draft.trim();
@@ -189,12 +263,45 @@ export function ConversationDetail() {
     } finally {
       setSending(false);
     }
-  }, [draft, sending, id]);
+    sendTypingStop();
+  }, [draft, sending, id, sendTypingStop]);
+
+  const onDraftChange = (value: string) => {
+    setDraft(value);
+    const now = Date.now();
+    if (value.trim() && now - lastTypingSentAt.current > TYPING_RESEND_INTERVAL_MS) {
+      lastTypingSentAt.current = now;
+      void emit('typing:start', { conversationId: id }).catch(() => {});
+    }
+    window.clearTimeout(typingStopTimer.current);
+    typingStopTimer.current = window.setTimeout(sendTypingStop, TYPING_STOP_DELAY_MS);
+  };
+
+  useEffect(() => () => window.clearTimeout(typingStopTimer.current), [id]);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void send();
+    }
+  };
+
+  const doExport = async () => {
+    setExporting(true);
+    try {
+      const blob = await exportConversation(id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `conversation-${id}.txt`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.push(err instanceof ApiError ? err.message : 'Could not export transcript.', 'error');
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -256,6 +363,9 @@ export function ConversationDetail() {
             {takingOver ? 'Taking over…' : 'Take over'}
           </button>
         )}
+        <button type="button" className="btn" onClick={() => void doExport()} disabled={exporting}>
+          {exporting ? 'Exporting…' : 'Export transcript'}
+        </button>
       </header>
 
       <div className={styles.messages} ref={scrollRef} onScroll={onScroll}>
@@ -267,11 +377,15 @@ export function ConversationDetail() {
             <div className={styles.msgMeta}>
               <span className={styles.msgRole}>{ROLE_LABEL[m.role]}</span>
               <span className={styles.msgTime}>{formatTime(m.createdAt)}</span>
+              {m.role === 'AGENT' && !m.pending && (
+                <span className={styles.readMarker}>{m.readAt ? 'Read' : 'Delivered'}</span>
+              )}
             </div>
             <div className={styles.msgBody}>{m.content}</div>
           </div>
         ))}
         {aiTyping && <div className={styles.typing}>AI is typing…</div>}
+        {visitorTyping && <div className={styles.typing}>Visitor is typing…</div>}
       </div>
 
       <div className={styles.composer}>
@@ -281,7 +395,7 @@ export function ConversationDetail() {
             className="textarea"
             placeholder="Type a reply — Enter to send, Shift+Enter for a new line"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => onDraftChange(e.target.value)}
             onKeyDown={onKeyDown}
             rows={2}
           />

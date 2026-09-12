@@ -10,8 +10,21 @@ import {
   joinConversationSchema,
   resumeConversationSchema,
   sendMessageSchema,
+  typingSchema,
+  readReceiptSchema,
 } from '../schemas/realtime.js';
 import { respondToVisitorMessage, handoff as aiHandoff } from '../ai/responder.js';
+import { checkLimit } from './rateLimiter.js';
+
+// Conservative starting limits — session-start is the more expensive/abusable
+// action (creates a DB row, notifies dashboards) so it's throttled much more
+// tightly than a per-message send. Tunable via these constants only.
+const RATE_LIMITS = {
+  'start-conversation': { limit: 5, windowSeconds: 60 },
+  'send-message': { limit: 20, windowSeconds: 10 },
+  'resume-conversation': { limit: 30, windowSeconds: 60 },
+  'join-conversation': { limit: 30, windowSeconds: 60 },
+};
 
 /**
  * Phase 3 — real-time chat.
@@ -73,9 +86,25 @@ export function initSocket(app) {
   // the model is still thinking must not kick off an overlapping run.
   const aiInFlight = new Set();
 
+  // Typing-indicator auto-expire timers, keyed by `${socket.id}:${conversationId}`.
+  // A well-behaved client sends typing:stop itself, but a dropped connection
+  // (closed tab, lost network) must not leave the other party staring at a
+  // stale "typing…" forever — the server clears it after TYPING_TIMEOUT_MS of
+  // silence, and also on disconnect.
+  const TYPING_TIMEOUT_MS = 5000;
+  const typingTimers = new Map();
+
+  function clearTypingTimer(key) {
+    const timer = typingTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      typingTimers.delete(key);
+    }
+  }
+
   // --- per-connection handlers ------------------------------------------------
   io.on('connection', (socket) => {
-    app.log.debug({ id: socket.id, kind: socket.data.kind }, 'socket connected');
+    app.log.debug({ id: socket.id, kind: socket.data.kind, tenantId: socket.data.tenantId }, 'socket connected');
 
     // Agents get their tenant-wide room so dashboards receive tenant-scoped
     // notifications (conversation-needs-human, conversation-updated) without
@@ -84,14 +113,29 @@ export function initSocket(app) {
       socket.join(tenantRoom(socket.data.tenantId));
     }
 
-    const fail = (ack, code, message) => {
-      if (typeof ack === 'function') ack({ ok: false, error: { code, message } });
+    const fail = (ack, code, message, extra) => {
+      if (typeof ack === 'function') ack({ ok: false, error: { code, message, ...extra } });
     };
 
     // Wrap a handler so thrown errors become a well-formed ack instead of an
-    // unhandled rejection.
-    const guard = (handler) => async (payload, ack) => {
+    // unhandled rejection. `bucket` optionally rate-limits the event first,
+    // keyed by tenant + connecting IP (never IP alone — see rateLimiter.js)
+    // so one tenant's traffic can never exhaust another's budget.
+    const guard = (handler, bucket) => async (payload, ack) => {
       try {
+        if (bucket) {
+          const { allowed, retryAfterMs } = await checkLimit({
+            bucket,
+            tenantId: socket.data.tenantId,
+            ip: socket.handshake.address,
+            ...RATE_LIMITS[bucket],
+          });
+          if (!allowed) {
+            return fail(ack, 'RATE_LIMITED', 'Too many requests — please wait a moment', {
+              retryAfterMs,
+            });
+          }
+        }
         await handler(payload, ack);
       } catch (err) {
         if (err instanceof ZodError) {
@@ -101,10 +145,10 @@ export function initSocket(app) {
           return fail(ack, err.code ?? 'APP_ERROR', err.message);
         }
         if (isPrismaUnavailable(err)) {
-          app.log.error({ err: err.message, code: err.code, socketId: socket.id }, 'database unavailable');
+          app.log.error({ err: err.message, code: err.code, socketId: socket.id, tenantId: socket.data.tenantId }, 'database unavailable');
           return fail(ack, 'SERVICE_UNAVAILABLE', 'Service temporarily unavailable');
         }
-        app.log.error({ err, socketId: socket.id }, 'socket handler error');
+        app.log.error({ err, socketId: socket.id, tenantId: socket.data.tenantId }, 'socket handler error');
         return fail(ack, 'INTERNAL_ERROR', 'Internal error');
       }
     };
@@ -138,7 +182,7 @@ export function initSocket(app) {
             sessionId: conversation.visitorSessionId,
           });
         }
-      }),
+      }, 'start-conversation'),
     );
 
     // resume-conversation — visitor only. Lets a reloaded widget rejoin the
@@ -171,7 +215,7 @@ export function initSocket(app) {
         if (typeof ack === 'function') {
           ack({ ok: true, conversationId, messages });
         }
-      }),
+      }, 'resume-conversation'),
     );
 
     // join-conversation — agent only. Tenant-checked server-side.
@@ -201,7 +245,7 @@ export function initSocket(app) {
         if (typeof ack === 'function') {
           ack({ ok: true, conversation, messages });
         }
-      }),
+      }, 'join-conversation'),
     );
 
     // send-message — visitor or agent. Authorized by room membership, not by
@@ -246,7 +290,7 @@ export function initSocket(app) {
           io.to(conversationRoom(conversationId)).emit('ai-typing', { conversationId });
           respondToVisitorMessage({ io, tenantId: socket.data.tenantId, conversationId })
             .catch((err) => {
-              app.log.error({ err, conversationId }, 'ai responder failed — forcing handoff');
+              app.log.error({ err, conversationId, tenantId: socket.data.tenantId }, 'ai responder failed — forcing handoff');
               return aiHandoff({
                 io,
                 tenantId: socket.data.tenantId,
@@ -269,11 +313,111 @@ export function initSocket(app) {
         }
 
         if (typeof ack === 'function') ack({ ok: true, id: message.id });
+      }, 'send-message'),
+    );
+
+    // typing:start / typing:stop — visitor or agent, broadcast to the other
+    // party in the same conversation room. Authorized by room membership,
+    // exactly like send-message — no client-asserted id is ever trusted.
+    socket.on(
+      'typing:start',
+      guard(async (payload, ack) => {
+        const { conversationId } = typingSchema.parse(payload ?? {});
+        if (!socket.rooms.has(conversationRoom(conversationId))) {
+          return fail(ack, 'FORBIDDEN', 'Not a participant in this conversation');
+        }
+
+        const key = `${socket.id}:${conversationId}`;
+        clearTypingTimer(key);
+        typingTimers.set(
+          key,
+          setTimeout(() => {
+            typingTimers.delete(key);
+            io.to(conversationRoom(conversationId)).emit('typing', {
+              conversationId,
+              from: socket.data.kind,
+              typing: false,
+            });
+          }, TYPING_TIMEOUT_MS),
+        );
+
+        socket.to(conversationRoom(conversationId)).emit('typing', {
+          conversationId,
+          from: socket.data.kind,
+          typing: true,
+        });
+
+        if (typeof ack === 'function') ack({ ok: true });
+      }),
+    );
+
+    socket.on(
+      'typing:stop',
+      guard(async (payload, ack) => {
+        const { conversationId } = typingSchema.parse(payload ?? {});
+        if (!socket.rooms.has(conversationRoom(conversationId))) {
+          return fail(ack, 'FORBIDDEN', 'Not a participant in this conversation');
+        }
+
+        clearTypingTimer(`${socket.id}:${conversationId}`);
+        socket.to(conversationRoom(conversationId)).emit('typing', {
+          conversationId,
+          from: socket.data.kind,
+          typing: false,
+        });
+
+        if (typeof ack === 'function') ack({ ok: true });
+      }),
+    );
+
+    // message:read — visitor or agent marks every message up to and
+    // including `upToMessageId` as read (mark-through, not one event per
+    // message). Re-verifies room membership and re-resolves the cutoff
+    // message through forTenant() before writing — never trusts the client's
+    // conversationId/tenant pairing.
+    socket.on(
+      'message:read',
+      guard(async (payload, ack) => {
+        const { conversationId, upToMessageId } = readReceiptSchema.parse(payload ?? {});
+        if (!socket.rooms.has(conversationRoom(conversationId))) {
+          return fail(ack, 'FORBIDDEN', 'Not a participant in this conversation');
+        }
+
+        const db = forTenant(socket.data.tenantId);
+        const cutoff = await db.message.findFirst({ where: { id: upToMessageId, conversationId } });
+        if (!cutoff) {
+          return fail(ack, 'NOT_FOUND', 'Message not found');
+        }
+
+        const readAt = new Date();
+        await db.message.updateMany({
+          where: { conversationId, readAt: null, createdAt: { lte: cutoff.createdAt } },
+          data: { readAt },
+        });
+
+        io.to(conversationRoom(conversationId)).emit('messages-read', {
+          conversationId,
+          upToMessageId,
+          readAt,
+        });
+
+        if (typeof ack === 'function') ack({ ok: true });
       }),
     );
 
     socket.on('disconnect', (reason) => {
-      app.log.debug({ id: socket.id, reason }, 'socket disconnected');
+      const prefix = `${socket.id}:`;
+      for (const key of [...typingTimers.keys()]) {
+        if (!key.startsWith(prefix)) continue;
+        clearTypingTimer(key);
+        const conversationId = key.slice(prefix.length);
+        io.to(conversationRoom(conversationId)).emit('typing', {
+          conversationId,
+          from: socket.data.kind,
+          typing: false,
+        });
+      }
+      app.log.debug({ id: socket.id, reason, tenantId: socket.data.tenantId }, 'socket disconnected');
     });
   });
 

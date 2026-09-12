@@ -19,6 +19,7 @@ export interface Message {
   role: MessageRole;
   content: string;
   createdAt: string;
+  readAt?: string | null;
 }
 
 export interface ConversationWithMessages extends Conversation {

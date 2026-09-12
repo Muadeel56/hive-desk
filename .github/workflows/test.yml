@@ -1,0 +1,108 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server:
+    name: Server tests (tenant isolation, AI handoff, rate limiting, ...)
+    runs-on: ubuntu-latest
+
+    # Runner-default ports (5432 / 6379), not the dev-only 5442 host mapping
+    # from docker-compose.yml / server/.env.example — that mapping exists
+    # only to dodge a local Postgres already using 5432 on a dev machine.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: hivedesk
+          POSTGRES_PASSWORD: hivedesk
+          POSTGRES_DB: hivedesk
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hivedesk -d hivedesk"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 15
+
+    env:
+      DATABASE_URL: postgresql://hivedesk:hivedesk@localhost:5432/hivedesk?schema=public
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-test-secret-not-for-production
+      # No LLM_API_KEY on purpose: aiClient.isConfigured() is false, so every
+      # AI-path test that needs a real reply supplies its own stub via
+      # LLM_API_URL (see test/realtime.test.js) rather than calling out.
+      NODE_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Apply migrations
+        working-directory: server
+        run: npx prisma migrate deploy
+
+      - name: Run tests
+        working-directory: server
+        run: npm test
+
+  dashboard:
+    name: Dashboard build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Typecheck + build
+        working-directory: dashboard
+        run: npm run build
+
+  widget:
+    name: Widget build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: widget/package-lock.json
+
+      - name: Install dependencies
+        working-directory: widget
+        run: npm ci
+
+      - name: Build
+        working-directory: widget
+        run: npm run build

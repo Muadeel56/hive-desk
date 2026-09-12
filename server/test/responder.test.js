@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { respondToVisitorMessage } from '../src/ai/responder.js';
+import { respondToVisitorMessage, buildSystemPrompt } from '../src/ai/responder.js';
 import { AiError } from '../src/ai/aiClient.js';
 import { conversationRoom, tenantRoom } from '../src/realtime/socket.js';
 import { prisma } from '../src/lib/prisma.js';
@@ -209,6 +209,30 @@ test('isConfigured() false: immediate handoff, generateReply never called', asyn
   const fresh = await prisma.conversation.findUnique({ where: { id: conversation.id } });
   assert.equal(fresh.status, 'WAITING');
   assert.equal(io.events('conversation-needs-human')[0].payload.reason, 'ai-not-configured');
+});
+
+test('empty knowledge base: prompt says so and the responder still hands off gracefully', async () => {
+  const tenant = await makeTenant('emptykb');
+  const conversation = await makeConversation(tenant.id, { visitorText: 'anything at all' });
+  // No knowledgeBaseEntry rows created for this tenant.
+
+  const io = fakeIo();
+  const client = fakeClient({ reply: { text: '{"confident":false,"answer":""}', finishReason: 'STOP' } });
+
+  const result = await respondToVisitorMessage(
+    { io, tenantId: tenant.id, conversationId: conversation.id },
+    { client },
+  );
+
+  assert.deepEqual(result, { acted: true, mode: 'needsHuman' });
+  const fresh = await prisma.conversation.findUnique({ where: { id: conversation.id } });
+  assert.equal(fresh.status, 'WAITING');
+  assert.equal(io.events('conversation-needs-human')[0].payload.reason, 'ai-not-confident');
+});
+
+test('buildSystemPrompt renders an explicit empty-KB notice instead of an empty block', () => {
+  const prompt = buildSystemPrompt({ displayName: 'Acme', kbEntries: [] });
+  assert.match(prompt, /Knowledge Base is empty/);
 });
 
 test('conversation already AGENT: responder is a no-op', async () => {

@@ -35,7 +35,13 @@ async function errorHandler(fastify) {
 
     if (err instanceof AppError || err.isAppError) {
       return reply.status(err.statusCode).send({
-        error: { message: err.message, code: err.code },
+        error: {
+          message: err.message,
+          code: err.code,
+          // Only @fastify/rate-limit's errorResponseBuilder sets this today
+          // (see routes/widgetAuth.js) — omitted for every other AppError.
+          ...(typeof err.retryAfterMs === 'number' ? { retryAfterMs: err.retryAfterMs } : {}),
+        },
       });
     }
 

@@ -89,6 +89,9 @@ model Message {
   role           MessageRole
   content        String      @db.Text
   createdAt      DateTime    @default(now())
+  // Set when the other party (agent <-> visitor) has viewed this message.
+  // Null = unread. See the `message:read` socket event in realtime/socket.js.
+  readAt         DateTime?
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 

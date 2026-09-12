@@ -33,3 +33,15 @@ export const sendMessageSchema = z.object({
   conversationId: z.string().min(1),
   content: z.string().trim().min(1).max(4000),
 });
+
+// `typing:start` / `typing:stop` (visitor or agent) — same shape either way.
+export const typingSchema = z.object({
+  conversationId: z.string().min(1),
+});
+
+// `message:read` (visitor or agent) — mark every message up to and including
+// `upToMessageId` as read, rather than one event per message.
+export const readReceiptSchema = z.object({
+  conversationId: z.string().min(1),
+  upToMessageId: z.string().min(1),
+});

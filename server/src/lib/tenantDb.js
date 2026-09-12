@@ -88,6 +88,8 @@ function scopedMessages(tenantId) {
       await assertConversationOwned(args?.data?.conversationId);
       return prisma.message.create(args);
     },
+    updateMany: (args = {}) =>
+      prisma.message.updateMany(mergeWhere(args, { conversation: { tenantId } })),
   };
 }
 

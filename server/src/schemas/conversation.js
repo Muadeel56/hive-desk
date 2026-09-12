@@ -15,3 +15,7 @@ export const listConversationsQuery = z.object({
 export const conversationIdParam = z.object({
   id: z.string().min(1),
 });
+
+export const exportFormatQuery = z.object({
+  format: z.enum(['text', 'json']).default('text'),
+});
