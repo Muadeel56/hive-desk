@@ -20,12 +20,17 @@ worker.on('failed', (job, err) => {
   logger.error({ jobId: job?.id, err }, 'analytics worker: rollup job failed');
 });
 
-await registerRepeatableJob();
+try {
+  await registerRepeatableJob();
 
-// Run one pass immediately on boot so the dashboard isn't empty for up to an
-// hour waiting for the first :00 boundary.
-await runAnalyticsRollup();
-logger.info('analytics worker: started, hourly rollup scheduled');
+  // Run one pass immediately on boot so the dashboard isn't empty for up to an
+  // hour waiting for the first :00 boundary.
+  await runAnalyticsRollup();
+  logger.info('analytics worker: started, hourly rollup scheduled');
+} catch (err) {
+  logger.error({ err }, 'analytics worker: failed to start (Postgres/Redis unreachable?)');
+  process.exit(1);
+}
 
 async function shutdown(signal) {
   logger.info({ signal }, 'analytics worker: shutting down');

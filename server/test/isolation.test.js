@@ -118,3 +118,47 @@ test('widget session with no api key is 401', async () => {
   const res = await app.inject({ method: 'POST', url: '/widget/session', payload: {} });
   assert.equal(res.statusCode, 401);
 });
+
+test('agent route rejects a widgetApiKey used as a bearer token', async () => {
+  const A = await signup('A');
+
+  const res = await app.inject({
+    method: 'GET',
+    url: '/conversations',
+    headers: { authorization: `Bearer ${A.widgetApiKey}` },
+  });
+
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.json().error.code, 'UNAUTHORIZED');
+});
+
+test('widget route rejects an agent JWT used as x-widget-api-key', async () => {
+  const A = await signup('A');
+
+  const res = await app.inject({
+    method: 'POST',
+    url: '/widget/session',
+    headers: { 'x-widget-api-key': A.token },
+    payload: {},
+  });
+
+  assert.equal(res.statusCode, 401);
+});
+
+test('takeover on another tenant conversation id is 404', async () => {
+  const A = await signup('A');
+  const B = await signup('B');
+
+  const bSession = await startWidgetSession(B.widgetApiKey);
+  assert.equal(bSession.statusCode, 201);
+  const bConversationId = bSession.json().conversationId;
+
+  const res = await app.inject({
+    method: 'POST',
+    url: `/conversations/${bConversationId}/takeover`,
+    headers: { authorization: `Bearer ${A.token}` },
+  });
+
+  assert.equal(res.statusCode, 404);
+  assert.ok(!JSON.stringify(res.json()).includes(bConversationId), 'must not echo the target id back');
+});

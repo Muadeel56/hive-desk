@@ -4,6 +4,7 @@ import { ZodError } from 'zod';
 import { prisma } from '../lib/prisma.js';
 import { AppError } from '../lib/errors.js';
 import { forTenant } from '../lib/tenantDb.js';
+import { isPrismaUnavailable } from '../lib/prismaErrors.js';
 import {
   startConversationSchema,
   joinConversationSchema,
@@ -98,6 +99,10 @@ export function initSocket(app) {
         }
         if (err instanceof AppError || err?.isAppError) {
           return fail(ack, err.code ?? 'APP_ERROR', err.message);
+        }
+        if (isPrismaUnavailable(err)) {
+          app.log.error({ err: err.message, code: err.code, socketId: socket.id }, 'database unavailable');
+          return fail(ack, 'SERVICE_UNAVAILABLE', 'Service temporarily unavailable');
         }
         app.log.error({ err, socketId: socket.id }, 'socket handler error');
         return fail(ack, 'INTERNAL_ERROR', 'Internal error');
