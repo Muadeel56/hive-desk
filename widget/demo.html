@@ -15,8 +15,17 @@
       Run <code>npm run build</code> first, then open this file directly
       (<code>file://</code>) or serve the folder with <code>npx serve</code>.
     </p>
+    <p>
+      Set <code>data-tenant-key</code> below to a real seeded
+      <code>widgetApiKey</code> (<code>npm run seed</code> in <code>../server</code>).
+    </p>
 
-    <!-- The one line a tenant pastes on their site: -->
-    <script src="./dist/hivedesk-widget.js" data-api-key="test" data-api-url="http://localhost:3000"></script>
+    <!-- The one line a tenant pastes on their site
+         (data-api-key is still accepted as a legacy alias): -->
+    <script
+      src="./dist/hivedesk-widget.js"
+      data-tenant-key="GQf3jtd7ZFTz-BfoHCHhtKdkgs1KNEEEZPQQvoGM3_Q"
+      data-api-url="http://localhost:3000"
+    ></script>
   </body>
 </html>

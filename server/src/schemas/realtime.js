@@ -20,6 +20,14 @@ export const joinConversationSchema = z.object({
   conversationId: z.string().min(1),
 });
 
+// `resume-conversation` (visitor). Lets a reloaded widget rejoin the same
+// server-side conversation. `sessionId` is the visitorSessionId handed back by
+// `start-conversation`; it must match the stored row or the resume is refused.
+export const resumeConversationSchema = z.object({
+  conversationId: z.string().min(1),
+  sessionId: z.string().min(1),
+});
+
 // `send-message` (visitor or agent).
 export const sendMessageSchema = z.object({
   conversationId: z.string().min(1),

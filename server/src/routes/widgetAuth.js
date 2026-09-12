@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { forTenant } from '../lib/tenantDb.js';
 import { tenantRoom } from '../realtime/socket.js';
 import { startSessionSchema } from '../schemas/widget.js';
+import { normalizeSettings } from '../lib/tenantSettings.js';
 
 /**
  * Public widget endpoints. NO `authenticate` — only `tenantContext`, which here
@@ -10,6 +11,16 @@ import { startSessionSchema } from '../schemas/widget.js';
  */
 export default async function widgetAuthRoutes(fastify) {
   fastify.addHook('preHandler', fastify.tenantContext);
+
+  // GET /widget/config — public branding for the tenant that owns the widget
+  // API key. Only the three widget-safe fields; never the raw settings column
+  // or the widgetApiKey. Shares normalizeSettings() with the agent settings
+  // route so the two can't drift.
+  fastify.get('/config', async (request) => {
+    const tenant = await forTenant(request.tenantId).tenant.get();
+    const { displayName, welcomeMessage, brandColor } = normalizeSettings(tenant);
+    return { displayName, welcomeMessage, brandColor };
+  });
 
   // POST /widget/session — start an anonymous visitor session.
   fastify.post('/session', async (request, reply) => {
