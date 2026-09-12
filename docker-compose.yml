@@ -30,5 +30,53 @@ services:
       timeout: 5s
       retries: 15
 
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: hivedesk-server
+    restart: unless-stopped
+    env_file:
+      - server/.env
+    environment:
+      # In-network hostnames/ports, overriding whatever server/.env has for
+      # host-side `npm run dev` (localhost:5442 / localhost:6379).
+      DATABASE_URL: postgresql://hivedesk:hivedesk@postgres:5432/hivedesk?schema=public
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, not localhost: alpine resolves "localhost" to ::1 first and
+      # Fastify only binds the IPv4 wildcard (0.0.0.0), so wget against
+      # "localhost" gets connection-refused over IPv6 even though the app is up.
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: hivedesk-worker
+    restart: unless-stopped
+    env_file:
+      - server/.env
+    environment:
+      DATABASE_URL: postgresql://hivedesk:hivedesk@postgres:5432/hivedesk?schema=public
+      REDIS_URL: redis://redis:6379
+    command: ["node", "src/jobs/worker.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   hivedesk_pgdata:
